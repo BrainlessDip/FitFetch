@@ -1,0 +1,125 @@
+# FitFetch - FitGirl Repack Link Extractor
+
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/BrainlessDip/fitfetch)
+[![Python](https://img.shields.io/badge/python-3.14+-green.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
+
+A modern, dark-themed GUI tool for extracting direct download links from FitGirl repack pages. Built with PyQt6 and undetected-chromedriver.
+
+## Features
+
+- **Extract Links**: Automatically extract FuckingFast direct download links
+- **Modern UI**: Clean, dark GitHub-inspired interface
+- **Smart Detection**: Automatically finds and lists all parts
+- **Selective Extraction**: Choose specific parts to extract
+- **Copy to Clipboard**: Quick copy with Ctrl+C
+- **Save to File**: Export links with timestamped filenames
+- **Click to Select**: Click on filenames to toggle selection
+- **Progress Tracking**: Real-time progress bar and status updates
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.8 or higher
+- Google Chrome browser installed
+- pip (Python package manager)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/BrainlessDip/fitfetch.git
+cd fitfetch
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Run the application:
+```bash
+python main.py
+```
+
+## Optional (Recommended): Using `uv`
+
+You can also use [`uv`](https://github.com/astral-sh/uv), a fast Python package manager, instead of pip.
+
+### Run the application using uv
+
+```bash
+uv run main.py
+````
+
+## Dependencies
+
+```txt
+PyQt6>=6.4.0
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+undetected-chromedriver>=3.4.0
+lxml>=4.9.0
+```
+
+## Usage
+
+### Fetching Links
+1. Enter a FitGirl repack URL in the input field
+2. Press `Fetch` 
+3. All found parts will appear in the list
+
+### Extracting Links
+1. Select/deselect parts using checkboxes or click on filenames
+2. Press `Extract`
+3. Extracted links will appear in the output section
+
+
+## Project Structure
+
+```
+fitfetch/
+├── main.py              # Main application file
+├── requirements.txt     # Python dependencies
+├── README.md           # This file
+├── LICENSE             # MIT License
+└── screenshot.png      # Application screenshot
+```
+
+## Troubleshooting
+
+### Browser Issues
+- Ensure Google Chrome is installed
+- Chrome will open automatically during extraction
+
+### Dependencies
+- If you encounter import errors, ensure all dependencies are installed
+- Try updating pip: `pip install --upgrade pip`
+
+### Permission Issues
+- On some systems, you may need to run with administrative privileges
+- Ensure you have write permissions for saving files
+
+## Contributing
+
+Contributions are welcome! Here's how you can help:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Disclaimer
+
+This tool is for educational purposes only. Please respect the content providers' terms of service and use this tool responsibly.
+
+## Contact
+
+- **Issues**: [GitHub Issues](https://github.com/BrainlessDip/fitfetch/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/BrainlessDip/fitfetch/discussions)
