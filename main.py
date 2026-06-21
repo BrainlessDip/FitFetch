@@ -55,11 +55,13 @@ class CloudflareBypass:
     def __init__(self, threads=10):
         self.threads = threads
         self.local = threading.local()
+        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     def _createSession(self):
         scraper = cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows", "mobile": False}
         )
+        scraper.headers.update({"User-Agent": self.user_agent})
 
         retryStrategy = Retry(
             total=5,
