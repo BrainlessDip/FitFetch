@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.14+-green.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 
-A modern, dark-themed GUI tool for extracting direct download links from FitGirl repack pages. Built with PyQt6 and undetected-chromedriver.
+A modern, dark-themed GUI tool for extracting FuckingFast direct download links from FitGirl repack pages. Built with PyQt6 and nodriver
 
 ## Features
 
@@ -105,6 +105,18 @@ iconv -f ISO-8859-15 -t UTF-8 -o /app/.venv/lib/python3.14/site-packages/nodrive
 $src=".venv\Lib\site-packages\nodriver\cdp\network.py"; $dst="$src.new"; Get-Content $src -Encoding Latin1 | Set-Content $dst -Encoding utf8; Move-Item -Force $dst $src
 ```
 
+## Build
+
+To build the executable (.exe), run the following command:
+```bash
+nuitka --standalone --windows-console-mode=disable --enable-plugin=pyqt6 --enable-plugin=upx --lto=yes --remove-output --show-progress --jobs=12 --windows-icon-from-ico=./favicon.ico --windows-disable-console --include-package=cloudscraper --include-package=requests --include-package=bs4 --include-package=nodriver --include-package=PyQt6 --include-package=urllib3 --include-data-dir="path/browsers.json" --assume-yes --include-data-file=favicon.ico=favicon.ico --onefile-no-compression main.py
+```
+
+To find the `browsers.json` directory, run the following command:
+```
+python -c "import cloudscraper, os; print(os.path.join(os.path.dirname(cloudscraper.__file__), 'user_agent', 'browsers.json'))"
+```
+⚠️ This executable may be flagged by some antivirus software due to false positives commonly associated with Nuitka-compiled applications.
 
 ### Browser Issues
 - Ensure Google Chrome is installed
@@ -130,7 +142,7 @@ Contributions are welcome! Here's how you can help:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the AGPL-3.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## Disclaimer
 
