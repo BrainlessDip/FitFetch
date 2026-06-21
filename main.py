@@ -1,16 +1,12 @@
-"""
-FitFetch - FitGirl Repack Link Extractor
-A modern GUI tool for extracting direct download links from FitGirl repack pages.
-"""
-
 import sys
 import re
 import time
 import os
+import asyncio
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
-import undetected_chromedriver as uc
+import nodriver as uc
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -32,7 +28,7 @@ from PyQt6.QtWidgets import (
     QToolBar,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtGui import QFont, QAction, QIcon
 import traceback
 
 # Version
@@ -40,18 +36,50 @@ VERSION = "1.0.0"
 APP_NAME = "FitFetch"
 
 
-class FetchWorker(QThread):
+class AsyncWorker(QThread):
+    """Base class for async operations"""
+
     status_update = pyqtSignal(str)
-    fetch_complete = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.loop = None
+
+    def run(self):
+        """Run the async task"""
+        try:
+            # Create new event loop for this thread
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+
+            # Run the async method
+            self.loop.run_until_complete(self.async_run())
+
+        except Exception as e:
+            self.error_occurred.emit(
+                f"Thread error: {str(e)}\n{traceback.format_exc()}"
+            )
+        finally:
+            if self.loop:
+                self.loop.close()
+
+    async def async_run(self):
+        """Override this method with async logic"""
+        raise NotImplementedError
+
+
+class FetchWorker(AsyncWorker):
+    fetch_complete = pyqtSignal(list)
 
     def __init__(self, url):
         super().__init__()
         self.url = url
 
-    def run(self):
+    async def async_run(self):
         try:
             self.status_update.emit("Fetching links...")
+
             html = requests.get(
                 self.url,
                 headers={
@@ -59,6 +87,7 @@ class FetchWorker(QThread):
                 },
                 timeout=30,
             ).text
+
             soup = BeautifulSoup(html, "html.parser")
 
             links = list(
@@ -75,53 +104,28 @@ class FetchWorker(QThread):
             self.error_occurred.emit(f"Fetch error: {str(e)}\n{traceback.format_exc()}")
 
 
-class ExtractWorker(QThread):
-    status_update = pyqtSignal(str)
+class ExtractWorker(AsyncWorker):
     progress_update = pyqtSignal(int)
     link_found = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
     def __init__(self, links):
         super().__init__()
         self.links = links
+        self.browser = None
 
-    def run(self):
-        driver = None
+    async def async_run(self):
         try:
             self.status_update.emit("Initializing browser...")
 
-            # Configure Chrome options for better compatibility
-            options = uc.ChromeOptions()
-
-            # Essential options
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-setuid-sandbox")
-
-            # Additional options for stability
-            options.add_argument("--disable-web-security")
-            options.add_argument("--disable-features=IsolateOrigins,site-per-process")
-            options.add_argument("--disable-site-isolation-trials")
-
-            # User agent
-            options.add_argument(
-                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-
-            # Performance options
-            options.add_argument("--disable-logging")
-            options.add_argument("--log-level=3")
-            options.add_argument("--silent")
-
+            # Start browser with nodriver
             self.status_update.emit("Starting Chrome browser...")
-            driver = uc.Chrome(options=options, version_main=None)
-
-            # Set page load timeout
-            driver.set_page_load_timeout(30)
+            self.browser = await uc.start(
+                headless=False,
+                window_size=(1200, 800),
+                no_sandbox=True,
+                disable_gpu=True,
+            )
 
             self.status_update.emit(f"Processing {len(self.links)} links...")
 
@@ -133,11 +137,15 @@ class ExtractWorker(QThread):
 
                 try:
                     self.status_update.emit(f"Loading {filename}...")
-                    driver.get(link)
-                    time.sleep(3)
+
+                    # Navigate to the link - get returns a Tab object
+                    tab = await self.browser.get(link)
+                    await tab.sleep(3)  # Wait for page to load using nodriver's sleep
 
                     self.status_update.emit(f"Extracting from {filename}...")
-                    page_source = driver.page_source
+
+                    # Get page source using get_content() method
+                    page_source = await tab.get_content()
 
                     # Try multiple patterns
                     patterns = [
@@ -145,6 +153,7 @@ class ExtractWorker(QThread):
                         r"window\.open\(\'([^\']+)\'\)",
                         r'href="([^"]*fuckingfast[^"]*)"',
                         r"href='([^']*fuckingfast[^']*)'",
+                        r'https?://[^\s"\']*fuckingfast[^\s"\']*',
                     ]
 
                     match = None
@@ -154,19 +163,63 @@ class ExtractWorker(QThread):
                             break
 
                     if match:
-                        extracted_url = match.group(1)
-                        self.link_found.emit(extracted_url)
-                        self.status_update.emit(f"✓ Extracted: {filename}")
-                    else:
-                        self.link_found.emit(
-                            f"FAILED: {filename} - No direct link found"
+                        extracted_url = (
+                            match.group(1)
+                            if len(match.groups()) > 0
+                            else match.group(0)
                         )
-                        self.status_update.emit(f"✗ Failed: {filename}")
+                        self.link_found.emit(extracted_url)
+                        self.status_update.emit(f"Extracted: {filename}")
+                    else:
+                        # Try alternative: look for elements containing "fuckingfast"
+                        try:
+                            # Find all links with href containing "fuckingfast"
+                            elements = await tab.find_all(text="fuckingfast", timeout=2)
+                            found = False
+
+                            if elements:
+                                for elem in elements:
+                                    # Try to get parent element (which might be the link)
+                                    parent = await elem.parent()
+                                    if parent:
+                                        href = await parent.get_attribute("href")
+                                        if href and "fuckingfast" in href:
+                                            self.link_found.emit(href)
+                                            self.status_update.emit(
+                                                f"Extracted: {filename}"
+                                            )
+                                            found = True
+                                            break
+
+                            if not found:
+                                # Try using select_all with css selector
+                                links = await tab.select_all(
+                                    "a[href*='fuckingfast']", timeout=2
+                                )
+                                if links:
+                                    href = await links[0].get_attribute("href")
+                                    if href:
+                                        self.link_found.emit(href)
+                                        self.status_update.emit(
+                                            f"Extracted: {filename}"
+                                        )
+                                        found = True
+
+                                if not found:
+                                    self.link_found.emit(
+                                        f"FAILED: {filename} - No direct link found"
+                                    )
+                                    self.status_update.emit(f"Failed: {filename}")
+                        except Exception as e:
+                            self.link_found.emit(
+                                f"FAILED: {filename} - No direct link found"
+                            )
+                            self.status_update.emit(f"Failed: {filename}")
 
                 except Exception as e:
                     error_msg = str(e)
                     self.link_found.emit(f"ERROR: {filename} - {error_msg}")
-                    self.status_update.emit(f"✗ Error: {filename} - {error_msg}")
+                    self.status_update.emit(f"Error: {filename} - {error_msg}")
 
                 self.progress_update.emit(i)
 
@@ -177,10 +230,10 @@ class ExtractWorker(QThread):
             error_msg = f"Browser error: {str(e)}\n{traceback.format_exc()}"
             self.error_occurred.emit(error_msg)
         finally:
-            if driver:
+            if self.browser:
                 try:
                     self.status_update.emit("Closing browser...")
-                    driver.quit()
+                    await self.browser.stop()
                 except:
                     pass
 
@@ -786,21 +839,53 @@ class FitFetchApp(QMainWindow):
 
     def show_about(self):
         about_text = f"""
-        <h2>{APP_NAME} v{VERSION}</h2>
-        <p>A modern GUI tool for extracting direct download links from FitGirl repack pages.</p>
-        <br>
-        <b>Features:</b>
-        <ul>
-            <li>Extract FuckingFast direct download links</li>
-            <li>Dark modern interface</li>
-            <li>Select/deselect individual parts</li>
-            <li>Copy links to clipboard</li>
-            <li>Save links to file</li>
-        </ul>
-        <br>
-        <p>Built with PyQt6 and undetected-chromedriver</p>
-        """
-        QMessageBox.about(self, f"About {APP_NAME}", about_text)
+            <h2>{APP_NAME} v{VERSION}</h2>
+
+            <p>
+              A modern desktop application for extracting direct download links
+              from FitGirl Repack pages quickly and efficiently.
+            </p>
+
+            <h3>Features</h3>
+            <ul>
+              <li>Extract direct FuckingFast download links</li>
+              <li>Modern dark-themed interface</li>
+              <li>Select or deselect individual parts</li>
+              <li>One-click clipboard copying</li>
+              <li>Export links to a text file</li>
+              <li>Fast and reliable extraction</li>
+            </ul>
+
+            <p>
+              Built with <b>PyQt6</b> and <b>nodriver</b>.
+            </p>
+
+            <hr>
+
+            <p>
+              <b>Developer:</b> Dip Dey
+            </p>
+
+            <p>
+              <a href="https://github.com/BrainlessDip">
+                GitHub
+              </a>
+              &nbsp;|&nbsp;
+              <a href="https://www.facebook.com/brainless.dip">
+                Facebook
+              </a>
+            </p>
+
+            <p style="color: white;">
+              Thank you for using {APP_NAME} ❤️
+            </p>
+            """
+        msgBox = QMessageBox(self)
+        msgBox.setWindowTitle(f"About {APP_NAME}")
+        msgBox.setTextFormat(Qt.TextFormat.RichText)
+        msgBox.setText(about_text)
+        msgBox.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        msgBox.exec()
 
     def update_status(self, message):
         self.status_label.setText(f"● {message}")
@@ -1087,6 +1172,7 @@ class FitFetchApp(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(QIcon("favicon.ico"))
     app.setStyle(QStyleFactory.create("Fusion"))
 
     window = FitFetchApp()

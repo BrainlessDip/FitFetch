@@ -89,6 +89,19 @@ fitfetch/
 
 ## Troubleshooting
 
+### NoDriver Issue (For now)
+
+SyntaxError: Non-UTF-8 code starting with '\xb1' on line 1345, but no encoding declared; see https://peps.python.org/pep-0263/ for details
+
+```bash
+iconv -f ISO-8859-15 -t UTF-8 -o /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py.new /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py mv -f /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py.new /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py
+```
+
+```poweshell
+$src=".venv\Lib\site-packages\nodriver\cdp\network.py"; $dst="$src.new"; Get-Content $src -Encoding Latin1 | Set-Content $dst -Encoding utf8; Move-Item -Force $dst $src
+```
+
+
 ### Browser Issues
 - Ensure Google Chrome is installed
 - Chrome will open automatically during extraction

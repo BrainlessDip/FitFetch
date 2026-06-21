@@ -11,3 +11,8 @@ wheels/
 
 # Others
 main.spec
+upx.exe
+main.dist
+main.onefile-build
+main.build
+main.exe
