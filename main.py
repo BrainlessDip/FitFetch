@@ -1,12 +1,25 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+FitFetch - FitGirl Repack Link Extractor
+A modern GUI tool for extracting direct download links from FitGirl repack pages.
+"""
+
 import sys
 import re
-import time
 import os
 import asyncio
+import threading
 from datetime import datetime
-import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import cloudscraper
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import nodriver as uc
+
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -36,55 +49,320 @@ VERSION = "1.0.0"
 APP_NAME = "FitFetch"
 
 
-class AsyncWorker(QThread):
-    """Base class for async operations"""
+class CloudflareBypass:
+    """Handles Cloudflare protected pages with cloudscraper and retry strategy"""
+
+    def __init__(self, threads=10):
+        self.threads = threads
+        self.local = threading.local()
+
+    def _createSession(self):
+        scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+
+        retryStrategy = Retry(
+            total=5,
+            backoff_factor=1.5,
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["GET", "POST"],
+        )
+
+        adapter = HTTPAdapter(
+            max_retries=retryStrategy, pool_connections=100, pool_maxsize=100
+        )
+
+        scraper.mount("http://", adapter)
+        scraper.mount("https://", adapter)
+
+        return scraper
+
+    def _getSession(self):
+        if not hasattr(self.local, "session"):
+            self.local.session = self._createSession()
+        return self.local.session
+
+    def fetch(self, url):
+        """Fetch a single URL"""
+        session = self._getSession()
+
+        try:
+            r = session.get(url, timeout=30, allow_redirects=True)
+            return url, r.text, r.status_code, r.headers
+
+        except Exception as e:
+            return url, None, None, None
+
+    def fetchMany(self, urls):
+        """Fetch multiple URLs concurrently"""
+        results = {}
+
+        with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            futures = [executor.submit(self.fetch, url) for url in urls]
+
+            for f in as_completed(futures):
+                url, data, status, headers = f.result()
+                results[url] = {
+                    "content": data,
+                    "status": status,
+                    "url": url,
+                    "headers": headers,
+                }
+
+        return results
+
+
+class CloudflareWorker(QThread):
+    """Worker thread for Cloudflare extraction (V1)"""
 
     status_update = pyqtSignal(str)
+    progress_update = pyqtSignal(int)
+    link_found = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
+    extraction_complete = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, links, threads=10):
         super().__init__()
-        self.loop = None
+        self.links = links
+        self.threads = threads
+        self.cf_bypass = None
 
     def run(self):
-        """Run the async task"""
         try:
-            # Create new event loop for this thread
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
+            self.status_update.emit("Initializing Cloudflare bypass...")
+            self.cf_bypass = CloudflareBypass(threads=self.threads)
 
-            # Run the async method
-            self.loop.run_until_complete(self.async_run())
+            self.status_update.emit(f"Processing {len(self.links)} links...")
+
+            for i, link in enumerate(self.links, 1):
+                self.msleep(1000)
+                filename = link.split("/")[-1].split("#")[-1]
+                part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
+                part_num = part_match.group(1) if part_match else "0"
+                _, page_source, status_code, headers = self.cf_bypass.fetch(link)
+                self.status_update.emit(
+                    f"[{i}/{len(self.links)}] Processing {filename} (Status: {status_code}) - (Part: {part_num})"
+                )
+
+                if page_source and status_code == 429:
+                    retry_after = headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            retry_seconds = int(retry_after)
+                        except:
+                            retry_seconds = 60
+                    else:
+                        retry_seconds = 60
+
+                    self.link_found.emit(
+                        f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds- (Part: {part_num})"
+                    )
+                    self.status_update.emit(
+                        f"Rate Limited: {filename} - (Part: {part_num})"
+                    )
+
+                elif page_source and status_code == 403:
+                    # Check if it's a Cloudflare challenge
+                    if (
+                        "cf-challenge" in page_source.lower()
+                        or "cloudflare" in page_source.lower()
+                        or "just a moment" in page_source.lower()
+                    ):
+                        self.link_found.emit(
+                            f"CLOUDFLARE: {filename} - Protected, use V2 - (Part: {part_num})"
+                        )
+                        self.status_update.emit(
+                            f"Cloudflare detected: {filename} - (Part: {part_num})"
+                        )
+                elif page_source and status_code == 200:
+                    # Try to extract link from page source
+                    extracted_url = self._extract_link_from_html(page_source, filename)
+                    if extracted_url:
+                        self.link_found.emit(extracted_url + f"#{filename}")
+                        self.status_update.emit(
+                            f"Extracted: {filename} - (Part: {part_num})"
+                        )
+                    else:
+                        self.link_found.emit(
+                            f"FAILED: {filename} - No direct link found - (Part: {part_num})"
+                        )
+                        self.status_update.emit(
+                            f"Failed: {filename} - (Part: {part_num})"
+                        )
+                else:
+                    self.link_found.emit(
+                        f"FAILED: {filename} - Status {status_code} - (Part: {part_num})"
+                    )
+                    self.status_update.emit(
+                        f"Failed: {filename} (Status: {status_code})- (Part: {part_num})"
+                    )
+                self.progress_update.emit(i)
+
+            self.status_update.emit("Extraction complete (V1)")
+            self.extraction_complete.emit()
 
         except Exception as e:
             self.error_occurred.emit(
-                f"Thread error: {str(e)}\n{traceback.format_exc()}"
+                f"Cloudflare error: {str(e)}\n{traceback.format_exc()}"
+            )
+
+    def _extract_link_from_html(self, html, filename):
+        """Extract the direct link from HTML content"""
+        try:
+            pattern = r'https?://(?:[a-zA-Z0-9-]+\.)*fuckingfast\.co(?:/[^\s"\'<>]*)?'
+            match = re.search(pattern, html)
+            if match:
+                return match.group(1) if len(match.groups()) > 0 else match.group(0)
+            return None
+        except:
+            return None
+
+
+class NodriverWorker(QThread):
+    """Worker thread for nodriver extraction (V2)"""
+
+    status_update = pyqtSignal(str)
+    progress_update = pyqtSignal(int)
+    link_found = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+    extraction_complete = pyqtSignal()
+
+    def __init__(self, links):
+        super().__init__()
+        self.links = links
+        self.loop = None
+        self.browser = None
+
+    def run(self):
+        try:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self._async_run())
+        except Exception as e:
+            self.error_occurred.emit(
+                f"Nodriver error: {str(e)}\n{traceback.format_exc()}"
             )
         finally:
             if self.loop:
                 self.loop.close()
 
-    async def async_run(self):
-        """Override this method with async logic"""
-        raise NotImplementedError
+    async def _async_run(self):
+        try:
+            self.status_update.emit("Initializing browser (V2)...")
+
+            self.browser = await uc.start(
+                headless=False,
+                window_size=(1200, 800),
+                no_sandbox=True,
+                disable_gpu=True,
+            )
+
+            self.status_update.emit(f"Processing {len(self.links)} links...")
+
+            for i, link in enumerate(self.links, 1):
+                filename = link.split("/")[-1].split("#")[-1]
+                part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
+                part_num = part_match.group(1) if part_match else "0"
+                self.status_update.emit(
+                    f"[{i}/{len(self.links)}] Processing {filename} - (Part:: {part_num})"
+                )
+
+                try:
+                    self.status_update.emit(
+                        f"Loading {filename}... - (Part:: {part_num})"
+                    )
+                    tab = await self.browser.get(link)
+                    await tab.sleep(3) if i == 1 else None
+
+                    self.status_update.emit(
+                        f"Extracting from {filename}... - (Part:: {part_num})"
+                    )
+                    page_source = await tab.get_content()
+
+                    pattern = (
+                        r'https?://(?:[a-zA-Z0-9-]+\.)*fuckingfast\.co(?:/[^\s"\'<>]*)?'
+                    )
+
+                    match = re.search(pattern, page_source)
+
+                    if match:
+                        extracted_url = (
+                            match.group(1)
+                            if len(match.groups()) > 0
+                            else match.group(0)
+                        )
+                        self.link_found.emit(extracted_url + f"#{filename}")
+                        self.status_update.emit(
+                            f"Extracted: {filename} - (Part: {part_num})"
+                        )
+                    elif "rate limited" in page_source.lower():
+                        self.link_found.emit(
+                            f"FAILED: {filename} - Rate limited - (Part:: {part_num})"
+                        )
+                        self.status_update.emit(
+                            f"Failed: {filename} - Rate limited - (Part:: {part_num})"
+                        )
+                    else:
+                        self.link_found.emit(
+                            f"FAILED: {filename} - No direct link found - (Part:: {part_num})"
+                        )
+                        self.status_update.emit(
+                            f"Failed: {filename} - (Part:: {part_num})"
+                        )
+
+                except Exception as e:
+                    error_msg = str(e)
+                    self.link_found.emit(
+                        f"ERROR: {filename} - {error_msg} - (Part:: {part_num})"
+                    )
+                    self.status_update.emit(
+                        f"Error: {filename} - {error_msg} - (Part:: {part_num})"
+                    )
+
+                self.progress_update.emit(i)
+
+                # Add 2 second delay between requests to avoid rate limiting
+                if i < len(self.links):
+                    self.status_update.emit("Waiting 2 seconds before next request...")
+                    await asyncio.sleep(2)
+
+            self.status_update.emit("Extraction complete (V2)")
+            self.extraction_complete.emit()
+
+        except Exception as e:
+            error_msg = f"Browser error: {str(e)}\n{traceback.format_exc()}"
+            self.error_occurred.emit(error_msg)
+        finally:
+            if self.browser:
+                try:
+                    self.status_update.emit("Closing browser...")
+                    await self.browser.stop()
+                except:
+                    pass
 
 
-class FetchWorker(AsyncWorker):
+class FetchWorker(QThread):
+    """Worker for fetching links from FitGirl page"""
+
+    status_update = pyqtSignal(str)
     fetch_complete = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
 
     def __init__(self, url):
         super().__init__()
         self.url = url
 
-    async def async_run(self):
+    def run(self):
         try:
-            self.status_update.emit("Fetching links...")
+            self.status_update.emit("Fetching links from FitGirl...")
 
-            html = requests.get(
+            # Use cloudscraper for initial fetch to bypass Cloudflare
+            scraper = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
+            )
+
+            html = scraper.get(
                 self.url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                },
                 timeout=30,
             ).text
 
@@ -102,140 +380,6 @@ class FetchWorker(AsyncWorker):
 
         except Exception as e:
             self.error_occurred.emit(f"Fetch error: {str(e)}\n{traceback.format_exc()}")
-
-
-class ExtractWorker(AsyncWorker):
-    progress_update = pyqtSignal(int)
-    link_found = pyqtSignal(str)
-    extraction_complete = pyqtSignal()
-
-    def __init__(self, links):
-        super().__init__()
-        self.links = links
-        self.browser = None
-
-    async def async_run(self):
-        try:
-            self.status_update.emit("Initializing browser...")
-
-            # Start browser with nodriver
-            self.status_update.emit("Starting Chrome browser...")
-            self.browser = await uc.start(
-                headless=False,
-                window_size=(1200, 800),
-                no_sandbox=True,
-                disable_gpu=True,
-            )
-
-            self.status_update.emit(f"Processing {len(self.links)} links...")
-
-            for i, link in enumerate(self.links, 1):
-                filename = link.split("/")[-1]
-                self.status_update.emit(
-                    f"[{i}/{len(self.links)}] Processing {filename}"
-                )
-
-                try:
-                    self.status_update.emit(f"Loading {filename}...")
-
-                    # Navigate to the link - get returns a Tab object
-                    tab = await self.browser.get(link)
-                    await tab.sleep(3)  # Wait for page to load using nodriver's sleep
-
-                    self.status_update.emit(f"Extracting from {filename}...")
-
-                    # Get page source using get_content() method
-                    page_source = await tab.get_content()
-
-                    # Try multiple patterns
-                    patterns = [
-                        r'window\.open\("([^"]+)"\)',
-                        r"window\.open\(\'([^\']+)\'\)",
-                        r'href="([^"]*fuckingfast[^"]*)"',
-                        r"href='([^']*fuckingfast[^']*)'",
-                        r'https?://[^\s"\']*fuckingfast[^\s"\']*',
-                    ]
-
-                    match = None
-                    for pattern in patterns:
-                        match = re.search(pattern, page_source)
-                        if match:
-                            break
-
-                    if match:
-                        extracted_url = (
-                            match.group(1)
-                            if len(match.groups()) > 0
-                            else match.group(0)
-                        )
-                        self.link_found.emit(extracted_url)
-                        self.status_update.emit(f"Extracted: {filename}")
-                    else:
-                        # Try alternative: look for elements containing "fuckingfast"
-                        try:
-                            # Find all links with href containing "fuckingfast"
-                            elements = await tab.find_all(text="fuckingfast", timeout=2)
-                            found = False
-
-                            if elements:
-                                for elem in elements:
-                                    # Try to get parent element (which might be the link)
-                                    parent = await elem.parent()
-                                    if parent:
-                                        href = await parent.get_attribute("href")
-                                        if href and "fuckingfast" in href:
-                                            self.link_found.emit(href)
-                                            self.status_update.emit(
-                                                f"Extracted: {filename}"
-                                            )
-                                            found = True
-                                            break
-
-                            if not found:
-                                # Try using select_all with css selector
-                                links = await tab.select_all(
-                                    "a[href*='fuckingfast']", timeout=2
-                                )
-                                if links:
-                                    href = await links[0].get_attribute("href")
-                                    if href:
-                                        self.link_found.emit(href)
-                                        self.status_update.emit(
-                                            f"Extracted: {filename}"
-                                        )
-                                        found = True
-
-                                if not found:
-                                    self.link_found.emit(
-                                        f"FAILED: {filename} - No direct link found"
-                                    )
-                                    self.status_update.emit(f"Failed: {filename}")
-                        except Exception as e:
-                            self.link_found.emit(
-                                f"FAILED: {filename} - No direct link found"
-                            )
-                            self.status_update.emit(f"Failed: {filename}")
-
-                except Exception as e:
-                    error_msg = str(e)
-                    self.link_found.emit(f"ERROR: {filename} - {error_msg}")
-                    self.status_update.emit(f"Error: {filename} - {error_msg}")
-
-                self.progress_update.emit(i)
-
-            self.status_update.emit("Extraction complete")
-            self.extraction_complete.emit()
-
-        except Exception as e:
-            error_msg = f"Browser error: {str(e)}\n{traceback.format_exc()}"
-            self.error_occurred.emit(error_msg)
-        finally:
-            if self.browser:
-                try:
-                    self.status_update.emit("Closing browser...")
-                    await self.browser.stop()
-                except:
-                    pass
 
 
 class ClickableCheckBox(QCheckBox):
@@ -552,26 +696,26 @@ class FitFetchApp(QMainWindow):
         file_menu = menubar.addMenu("File")
 
         fetch_action = QAction("Fetch Links", self)
-        fetch_action.setShortcut("Ctrl+Return")
         fetch_action.triggered.connect(self.start_fetch)
         file_menu.addAction(fetch_action)
 
-        extract_action = QAction("Extract Links", self)
-        extract_action.setShortcut("Ctrl+E")
-        extract_action.triggered.connect(self.start_extraction)
-        file_menu.addAction(extract_action)
+        extract_v1_action = QAction("Extract V1 (Cloudflare)", self)
+        extract_v1_action.triggered.connect(lambda: self.start_extraction(method="v1"))
+        file_menu.addAction(extract_v1_action)
+
+        extract_v2_action = QAction("Extract V2 (Browser)", self)
+        extract_v2_action.triggered.connect(lambda: self.start_extraction(method="v2"))
+        file_menu.addAction(extract_v2_action)
 
         file_menu.addSeparator()
 
         save_action = QAction("Save Links...", self)
-        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self.save_links)
         file_menu.addAction(save_action)
 
         file_menu.addSeparator()
 
         exit_action = QAction("Exit", self)
-        exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
@@ -579,19 +723,16 @@ class FitFetchApp(QMainWindow):
         edit_menu = menubar.addMenu("Edit")
 
         select_all_action = QAction("Select All", self)
-        select_all_action.setShortcut("Ctrl+A")
         select_all_action.triggered.connect(self.select_all)
         edit_menu.addAction(select_all_action)
 
         deselect_all_action = QAction("Deselect All", self)
-        deselect_all_action.setShortcut("Ctrl+D")
         deselect_all_action.triggered.connect(self.deselect_all)
         edit_menu.addAction(deselect_all_action)
 
         edit_menu.addSeparator()
 
         copy_action = QAction("Copy Links", self)
-        copy_action.setShortcut("Ctrl+C")
         copy_action.triggered.connect(self.copy_output)
         edit_menu.addAction(copy_action)
 
@@ -627,36 +768,34 @@ class FitFetchApp(QMainWindow):
 
         # Toolbar actions
         fetch_btn = QAction("Fetch", self)
-        fetch_btn.setShortcut("Ctrl+Return")
         fetch_btn.triggered.connect(self.start_fetch)
         toolbar.addAction(fetch_btn)
 
-        extract_btn = QAction("Extract", self)
-        extract_btn.setShortcut("Ctrl+E")
-        extract_btn.triggered.connect(self.start_extraction)
-        toolbar.addAction(extract_btn)
+        extract_v1_btn = QAction("Extract V1", self)
+        extract_v1_btn.triggered.connect(lambda: self.start_extraction(method="v1"))
+        toolbar.addAction(extract_v1_btn)
+
+        extract_v2_btn = QAction("Extract V2", self)
+        extract_v2_btn.triggered.connect(lambda: self.start_extraction(method="v2"))
+        toolbar.addAction(extract_v2_btn)
 
         toolbar.addSeparator()
 
         select_all_btn = QAction("Select All", self)
-        select_all_btn.setShortcut("Ctrl+A")
         select_all_btn.triggered.connect(self.select_all)
         toolbar.addAction(select_all_btn)
 
         deselect_all_btn = QAction("Deselect All", self)
-        deselect_all_btn.setShortcut("Ctrl+D")
         deselect_all_btn.triggered.connect(self.deselect_all)
         toolbar.addAction(deselect_all_btn)
 
         toolbar.addSeparator()
 
         save_btn = QAction("Save", self)
-        save_btn.setShortcut("Ctrl+S")
         save_btn.triggered.connect(self.save_links)
         toolbar.addAction(save_btn)
 
         copy_btn = QAction("Copy", self)
-        copy_btn.setShortcut("Ctrl+C")
         copy_btn.triggered.connect(self.copy_output)
         toolbar.addAction(copy_btn)
 
@@ -675,8 +814,13 @@ class FitFetchApp(QMainWindow):
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("Enter FitGirl repack URL...")
-        self.url_input.setText("https://fitgirl-repacks.site/grand-theft-auto-v/")
         self.url_input.returnPressed.connect(self.start_fetch)
+
+        self.paste_btn = QPushButton("Paste")
+        self.paste_btn.setProperty("primary", True)
+        self.paste_btn.clicked.connect(self.paste_from_clipboard)
+        self.paste_btn.setFixedWidth(80)
+        self.paste_btn.setFixedHeight(32)
 
         self.fetch_btn = QPushButton("Fetch")
         self.fetch_btn.setProperty("primary", True)
@@ -685,6 +829,7 @@ class FitFetchApp(QMainWindow):
         self.fetch_btn.setFixedHeight(32)
 
         url_layout.addWidget(self.url_input)
+        url_layout.addWidget(self.paste_btn)
         url_layout.addWidget(self.fetch_btn)
 
         input_layout.addLayout(url_layout)
@@ -762,14 +907,22 @@ class FitFetchApp(QMainWindow):
         control_layout.addWidget(self.deselect_all_btn)
         control_layout.addStretch()
 
-        self.extract_btn = QPushButton("Extract")
-        self.extract_btn.setProperty("primary", True)
-        self.extract_btn.clicked.connect(self.start_extraction)
-        self.extract_btn.setEnabled(False)
-        self.extract_btn.setFixedHeight(32)
-        self.extract_btn.setFixedWidth(80)
+        self.extract_v1_btn = QPushButton("Extract V1")
+        self.extract_v1_btn.setProperty("primary", True)
+        self.extract_v1_btn.clicked.connect(lambda: self.start_extraction(method="v1"))
+        self.extract_v1_btn.setEnabled(False)
+        self.extract_v1_btn.setFixedHeight(32)
+        self.extract_v1_btn.setFixedWidth(100)
 
-        control_layout.addWidget(self.extract_btn)
+        self.extract_v2_btn = QPushButton("Extract V2")
+        self.extract_v2_btn.setProperty("primary", True)
+        self.extract_v2_btn.clicked.connect(lambda: self.start_extraction(method="v2"))
+        self.extract_v2_btn.setEnabled(False)
+        self.extract_v2_btn.setFixedHeight(32)
+        self.extract_v2_btn.setFixedWidth(100)
+
+        control_layout.addWidget(self.extract_v1_btn)
+        control_layout.addWidget(self.extract_v2_btn)
         parts_layout.addLayout(control_layout)
 
         splitter.addWidget(parts_widget)
@@ -837,6 +990,51 @@ class FitFetchApp(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Ready")
 
+    def paste_from_clipboard(self):
+        """Paste URL from clipboard into the input field with validation"""
+        clipboard = QApplication.clipboard()
+        text = clipboard.text().strip()
+
+        if not text:
+            self.statusBar().showMessage("Clipboard is empty", 3000)
+            return
+
+        if self._is_valid_fitgirl_url(text):
+            self.url_input.setText(text)
+            self.statusBar().showMessage(
+                "Valid FitGirl URL pasted from clipboard", 3000
+            )
+            self.start_fetch()
+        else:
+            self.statusBar().showMessage(
+                "Invalid URL! Please enter a valid FitGirl repack URL", 5000
+            )
+            QMessageBox.warning(
+                self,
+                "Invalid URL",
+                "The pasted URL is not a valid FitGirl repack URL.\n\n"
+                "Expected format: https://fitgirl-repacks.site/xxx\n\n"
+                "Example: https://fitgirl-repacks.site/grand-theft-auto-v/",
+            )
+
+    def _is_valid_fitgirl_url(self, url):
+        """Validate if the URL is a proper FitGirl repack URL"""
+        if not url:
+            return False
+
+        fitgirl_patterns = [
+            r"^https?://fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/?$",
+            r"^https?://www\.fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/?$",
+            r"^https?://fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_/]*$",
+            r"^https?://www\.fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_/]*$",
+        ]
+
+        for pattern in fitgirl_patterns:
+            if re.match(pattern, url, re.IGNORECASE):
+                return True
+
+        return False
+
     def show_about(self):
         about_text = f"""
             <h2>{APP_NAME} v{VERSION}</h2>
@@ -848,7 +1046,8 @@ class FitFetchApp(QMainWindow):
 
             <h3>Features</h3>
             <ul>
-              <li>Extract direct FuckingFast download links</li>
+              <li><b>V1 (Cloudflare):</b> Fast concurrent extraction using cloudscraper</li>
+              <li><b>V2 (Browser):</b> Fallback using nodriver for Cloudflare challenges</li>
               <li>Modern dark-themed interface</li>
               <li>Select or deselect individual parts</li>
               <li>One-click clipboard copying</li>
@@ -857,7 +1056,7 @@ class FitFetchApp(QMainWindow):
             </ul>
 
             <p>
-              Built with <b>PyQt6</b> and <b>nodriver</b>.
+              Built with <b>PyQt6</b>, <b>cloudscraper</b> and <b>nodriver</b>.
             </p>
 
             <hr>
@@ -943,9 +1142,9 @@ class FitFetchApp(QMainWindow):
         sorted_links = sorted(links, key=extract_number)
 
         for idx, link in enumerate(sorted_links, 1):
-            filename = link.split("/")[-1]
+            filename = link.split("/")[-1].split("#")[-1]
             part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
-            part_num = part_match.group(1) if part_match else str(idx)
+            part_num = part_match.group(1) if part_match else "0"
 
             # Container for compact display
             container = QWidget()
@@ -1013,7 +1212,8 @@ class FitFetchApp(QMainWindow):
 
         self.update_status(f"Found {len(links)} parts")
         self.parts_count.setText(f"{len(links)} found")
-        self.extract_btn.setEnabled(True)
+        self.extract_v1_btn.setEnabled(True)
+        self.extract_v2_btn.setEnabled(True)
 
     def on_checkbox_changed(self, link, state):
         self.update_parts_count()
@@ -1042,7 +1242,8 @@ class FitFetchApp(QMainWindow):
             return
 
         self.fetch_btn.setEnabled(False)
-        self.extract_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
         self.clear_checkboxes()
         self.output_text.clear()
         self.progress_bar.setValue(0)
@@ -1063,7 +1264,7 @@ class FitFetchApp(QMainWindow):
         self.fetch_btn.setEnabled(True)
         QMessageBox.critical(self, "Error", f"An error occurred:\n{error_msg}")
 
-    def start_extraction(self):
+    def start_extraction(self, method="v1"):
         selected = self.get_selected_links()
         if not selected:
             QMessageBox.warning(self, "Warning", "No items selected")
@@ -1075,9 +1276,16 @@ class FitFetchApp(QMainWindow):
         self.link_count.setText("0 extracted")
 
         self.fetch_btn.setEnabled(False)
-        self.extract_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
 
-        self.extract_worker = ExtractWorker(selected)
+        if method == "v1":
+            self.extract_worker = CloudflareWorker(selected, threads=10)
+            self.update_status("Starting V1 extraction (Cloudflare bypass)...")
+        else:
+            self.extract_worker = NodriverWorker(selected)
+            self.update_status("Starting V2 extraction (Browser)...")
+
         self.extract_worker.status_update.connect(self.update_status)
         self.extract_worker.progress_update.connect(self.progress_bar.setValue)
         self.extract_worker.link_found.connect(self.add_output)
@@ -1088,12 +1296,14 @@ class FitFetchApp(QMainWindow):
     def on_extract_error(self, error_msg):
         self.update_status(f"Error: {error_msg}")
         self.fetch_btn.setEnabled(True)
-        self.extract_btn.setEnabled(True)
+        self.extract_v1_btn.setEnabled(True)
+        self.extract_v2_btn.setEnabled(True)
         QMessageBox.critical(self, "Error", f"Extraction error:\n{error_msg}")
 
     def on_extraction_complete(self):
         self.fetch_btn.setEnabled(True)
-        self.extract_btn.setEnabled(True)
+        self.extract_v1_btn.setEnabled(True)
+        self.extract_v2_btn.setEnabled(True)
         self.update_status("Extraction complete")
         self.update_link_count()
 
@@ -1172,8 +1382,8 @@ class FitFetchApp(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setWindowIcon(QIcon("favicon.ico"))
     app.setStyle(QStyleFactory.create("Fusion"))
+    app.setWindowIcon(QIcon("favicon.ico"))
 
     window = FitFetchApp()
     window.show()

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "cloudscraper>=1.2.71",
     "nodriver>=0.50.3",
     "pyqt6>=6.11.0",
     "requests>=2.34.2",

@@ -22,7 +22,6 @@ A modern, dark-themed GUI tool for extracting direct download links from FitGirl
 ### Prerequisites
 
 - Python 3.8 or higher
-- Google Chrome browser installed
 - pip (Python package manager)
 
 ### Installation
@@ -47,7 +46,12 @@ python main.py
 
 You can also use [`uv`](https://github.com/astral-sh/uv), a fast Python package manager, instead of pip.
 
-### Run the application using uv
+1. Install dependencies
+```bash
+uv sync
+```
+
+2. Run the application using uv
 
 ```bash
 uv run main.py
