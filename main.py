@@ -39,13 +39,17 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QFileDialog,
     QToolBar,
+    QDialog,
+    QSpinBox,
+    QFormLayout,
+    QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QAction, QIcon
 import traceback
 
 # Version
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 APP_NAME = "FitFetch"
 
 
@@ -127,10 +131,11 @@ class CloudflareWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
-    def __init__(self, links, threads=10):
+    def __init__(self, links, threads=10, delay=1000):
         super().__init__()
         self.links = links
         self.threads = threads
+        self.delay = delay
         self.cf_bypass = None
 
     def run(self):
@@ -141,7 +146,7 @@ class CloudflareWorker(QThread):
             self.status_update.emit(f"Processing {len(self.links)} links...")
 
             for i, link in enumerate(self.links, 1):
-                self.msleep(1000)
+                self.msleep(self.delay)
                 filename = link.split("/")[-1].split("#")[-1]
                 file_id = (re.search(r"fuckingfast\.co/([^#/?]+)", link)).group(1)
                 part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
@@ -237,9 +242,10 @@ class NodriverWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
-    def __init__(self, links):
+    def __init__(self, links, delay=3):
         super().__init__()
         self.links = links
+        self.delay = delay
         self.loop = None
         self.browser = None
 
@@ -249,9 +255,7 @@ class NodriverWorker(QThread):
             asyncio.set_event_loop(self.loop)
             self.loop.run_until_complete(self._async_run())
         except Exception as e:
-            self.error_occurred.emit(
-                f"Nodriver error: {str(e)}\n{traceback.format_exc()}"
-            )
+            self.error_occurred.emit(f"Nodriver error: {type(e).__name__}: {e}")
         finally:
             if self.loop:
                 self.loop.close()
@@ -268,9 +272,14 @@ class NodriverWorker(QThread):
             )
 
             self.status_update.emit(f"Processing {len(self.links)} links...")
+            tab = await self.browser.get("https://fuckingfast.co")
+
+            while await tab.evaluate("document.readyState") != "complete":
+                await tab.sleep(0.1)
 
             for i, link in enumerate(self.links, 1):
                 filename = link.split("/")[-1].split("#")[-1]
+                file_id = (re.search(r"fuckingfast\.co/([^#/?]+)", link)).group(1)
                 part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
                 part_num = part_match.group(1) if part_match else "0"
                 self.status_update.emit(
@@ -279,28 +288,11 @@ class NodriverWorker(QThread):
 
                 try:
                     self.status_update.emit(
-                        f"Loading {filename}... - (Part:: {part_num})"
-                    )
-                    tab = await self.browser.get(link)
-                    await tab.sleep(3) if i == 1 else None
-
-                    self.status_update.emit(
                         f"Extracting from {filename}... - (Part:: {part_num})"
                     )
-                    page_source = await tab.get_content()
-
-                    pattern = r'hx-post="/f/([^/"]+)/go"'
-
-                    match = re.search(pattern, page_source)
-
-                    if match:
-                        extracted_file_id = (
-                            match.group(1)
-                            if len(match.groups()) > 0
-                            else match.group(0)
-                        )
+                    if file_id:
                         headers = await tab.evaluate(
-                            f'(async()=>Object.fromEntries((await fetch("/f/{extracted_file_id}/go",{{method:"POST"}})).headers.entries()))()',
+                            f'(async()=>Object.fromEntries((await fetch("/f/{file_id}/go",{{method:"POST"}})).headers.entries()))()',
                             await_promise=True,
                         )
                         extracted_url = dict(headers)["hx-redirect"]["value"]
@@ -308,13 +300,13 @@ class NodriverWorker(QThread):
                         self.status_update.emit(
                             f"Extracted: {filename} - (Part: {part_num})"
                         )
-                    elif "rate limited" in page_source.lower():
-                        self.link_found.emit(
-                            f"FAILED: {filename} - Rate limited - (Part:: {part_num})"
-                        )
-                        self.status_update.emit(
-                            f"Failed: {filename} - Rate limited - (Part:: {part_num})"
-                        )
+                    # elif "rate limited" in page_source.lower():
+                    #     self.link_found.emit(
+                    #         f"FAILED: {filename} - Rate limited - (Part:: {part_num})"
+                    #     )
+                    #     self.status_update.emit(
+                    #         f"Failed: {filename} - Rate limited - (Part:: {part_num})"
+                    #     )
                     else:
                         self.link_found.emit(
                             f"FAILED: {filename} - No direct link found - (Part:: {part_num})"
@@ -334,16 +326,19 @@ class NodriverWorker(QThread):
 
                 self.progress_update.emit(i)
 
-                # Add 2 second delay between requests to avoid rate limiting
+                # Add delay between requests to avoid rate limiting
                 if i < len(self.links):
-                    self.status_update.emit("Waiting 2 seconds before next request...")
-                    await asyncio.sleep(2)
+                    delay_sec = self.delay / 1000
+                    self.status_update.emit(
+                        f"Waiting {delay_sec} seconds before next request..."
+                    )
+                    await asyncio.sleep(delay_sec)
 
             self.status_update.emit("Extraction complete (V2)")
             self.extraction_complete.emit()
 
         except Exception as e:
-            error_msg = f"Browser error: {str(e)}\n{traceback.format_exc()}"
+            error_msg = f"Browser error: {type(e).__name__}: {e}"
             self.error_occurred.emit(error_msg)
         finally:
             if self.browser:
@@ -464,6 +459,84 @@ class ModernGroupBox(QGroupBox):
         """)
 
 
+class SettingsDialog(QDialog):
+    """Dialog for customizing delay settings"""
+
+    def __init__(self, v1_delay, v2_delay, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings - FitFetch")
+        self.setMinimumWidth(400)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        # V1 Delay setting
+        v1_group = ModernGroupBox("V1 (Cloudflare) Extraction")
+        v1_layout = QFormLayout(v1_group)
+
+        self.v1_delay_spin = QSpinBox()
+        self.v1_delay_spin.setRange(0, 30000)
+        self.v1_delay_spin.setSingleStep(100)
+        self.v1_delay_spin.setValue(v1_delay)
+        self.v1_delay_spin.setSuffix(" ms")
+        self.v1_delay_spin.setToolTip(
+            "Delay between each V1 (Cloudflare) request in milliseconds.\n"
+            "Higher values reduce rate limiting but slow extraction.\n"
+            "Default: 1000 ms (1 second)"
+        )
+        v1_layout.addRow("Request Delay:", self.v1_delay_spin)
+
+        v1_desc = QLabel(
+            "Time to wait between each link request during V1 extraction.\n"
+            "Increase if you get rate-limited frequently."
+        )
+        v1_desc.setStyleSheet(f"color: {ModernStyle.TEXT_SECONDARY}; font-size: 11px;")
+        v1_desc.setWordWrap(True)
+        v1_layout.addRow("", v1_desc)
+
+        layout.addWidget(v1_group)
+
+        # V2 Delay setting
+        v2_group = ModernGroupBox("V2 (Browser) Extraction")
+        v2_layout = QFormLayout(v2_group)
+
+        self.v2_delay_spin = QSpinBox()
+        self.v2_delay_spin.setRange(0, 30000)
+        self.v2_delay_spin.setSingleStep(100)
+        self.v2_delay_spin.setValue(v2_delay)
+        self.v2_delay_spin.setSuffix(" ms")
+        self.v2_delay_spin.setToolTip(
+            "Delay between each V2 (Browser) request to avoid rate limiting.\n"
+            "Higher values reduce rate limiting but slow extraction.\n"
+            "Default: 2000 ms (2 seconds)"
+        )
+        v2_layout.addRow("Request Delay:", self.v2_delay_spin)
+
+        v2_desc = QLabel(
+            "Time to wait between each link request during V2 extraction.\n"
+            "Increase if you get rate-limited frequently."
+        )
+        v2_desc.setStyleSheet(f"color: {ModernStyle.TEXT_SECONDARY}; font-size: 11px;")
+        v2_desc.setWordWrap(True)
+        v2_layout.addRow("", v2_desc)
+
+        layout.addWidget(v2_group)
+
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def get_v1_delay(self):
+        return self.v1_delay_spin.value()
+
+    def get_v2_delay(self):
+        return self.v2_delay_spin.value()
+
+
 class FitFetchApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -474,6 +547,10 @@ class FitFetchApp(QMainWindow):
         self.current_file = None
         self.worker = None
         self.extract_worker = None
+
+        # Delay settings (defaults)
+        self.v1_delay = 1000  # milliseconds
+        self.v2_delay = 1000  # milliseconds
 
         self.init_ui()
         self.apply_modern_style()
@@ -753,8 +830,19 @@ class FitFetchApp(QMainWindow):
         clear_action.triggered.connect(self.clear_output)
         edit_menu.addAction(clear_action)
 
+        # Settings menu
+        settings_menu = menubar.addMenu("Settings")
+
+        delays_action = QAction("Delays...", self)
+        delays_action.triggered.connect(self.open_settings)
+        settings_menu.addAction(delays_action)
+
         # Help menu
         help_menu = menubar.addMenu("Help")
+
+        how_to_use_action = QAction("How to Use", self)
+        how_to_use_action.triggered.connect(self.show_help)
+        help_menu.addAction(how_to_use_action)
 
         about_action = QAction("About FitFetch", self)
         about_action.triggered.connect(self.show_about)
@@ -1099,6 +1187,76 @@ class FitFetchApp(QMainWindow):
         msgBox.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         msgBox.exec()
 
+    def show_help(self):
+        help_text = f"""
+            <h2>{APP_NAME} - How to Use</h2>
+
+            <h3>Step 1: Fetch Links</h3>
+            <ol>
+              <li>Paste a FitGirl repack URL into the input field (or click <b>Paste</b> to paste from clipboard)</li>
+              <li>Click <b>Fetch</b> or press <b>Enter</b></li>
+              <li>The app will scrape all download links from the page</li>
+              <li>Links appear as checkboxes in the <b>Parts</b> section</li>
+            </ol>
+
+            <h3>Step 2: Select Parts</h3>
+            <ul>
+              <li>All parts are selected by default</li>
+              <li>Use <b>Select All</b> / <b>Deselect All</b> to toggle</li>
+              <li>Click individual checkboxes or part names to select/deselect specific parts</li>
+            </ul>
+
+            <h3>Step 3: Extract Direct Links</h3>
+            <ul>
+              <li><b>Extract V1 (Cloudflare):</b> Fast method using cloudscraper. Works when the site is not heavily Cloudflare-protected.</li>
+              <li><b>Extract V2 (Browser):</b> Uses a real browser (nodriver) to bypass Cloudflare challenges. Slower but more reliable for protected pages.</li>
+            </ul>
+            <p>Choose V2 if V1 fails with Cloudflare errors.</p>
+
+            <h3>Step 4: Save or Copy Links</h3>
+            <ul>
+              <li>Extracted direct download links appear in the <b>Links</b> section</li>
+              <li><b>Copy:</b> Copy all links to clipboard</li>
+              <li><b>Save:</b> Export links to a text file</li>
+            </ul>
+
+            <hr>
+
+            <h3>Settings</h3>
+            <p>Go to <b>Settings &gt; Delays...</b> to customize extraction delays:</p>
+            <ul>
+              <li><b>V1 Request Delay:</b> Time between each Cloudflare request (default: 1000 ms). Increase if rate-limited.</li>
+              <li><b>V2 Request Delay:</b> Time between each browser request (default: 1000 ms). Increase if rate-limited.</li>
+            </ul>
+
+            <hr>
+
+            <h3>Tips</h3>
+            <ul>
+              <li>Use V1 first for speed; switch to V2 only if V1 fails</li>
+              <li>If you get rate-limited, increase the V1 delay in Settings</li>
+              <li>The V2 browser window is real - don't close it during extraction</li>
+              <li>You can paste a URL directly by clicking <b>Paste</b></li>
+            </ul>
+            """
+        msgBox = QMessageBox(self)
+        msgBox.setWindowTitle(f"{APP_NAME} - How to Use")
+        msgBox.setTextFormat(Qt.TextFormat.RichText)
+        msgBox.setText(help_text)
+        msgBox.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        msgBox.setMinimumWidth(500)
+        msgBox.exec()
+
+    def open_settings(self):
+        dialog = SettingsDialog(self.v1_delay, self.v2_delay, self)
+        if dialog.exec():
+            self.v1_delay = dialog.get_v1_delay()
+            self.v2_delay = dialog.get_v2_delay()
+            self.statusBar().showMessage(
+                f"Settings updated: V1 delay={self.v1_delay}ms, V2 delay={self.v2_delay / 1000}s",
+                3000,
+            )
+
     def update_status(self, message):
         self.status_label.setText(f"● {message}")
         self.statusBar().showMessage(message)
@@ -1293,10 +1451,12 @@ class FitFetchApp(QMainWindow):
         self.extract_v2_btn.setEnabled(False)
 
         if method == "v1":
-            self.extract_worker = CloudflareWorker(selected, threads=10)
+            self.extract_worker = CloudflareWorker(
+                selected, threads=10, delay=self.v1_delay
+            )
             self.update_status("Starting V1 extraction (Cloudflare bypass)...")
         else:
-            self.extract_worker = NodriverWorker(selected)
+            self.extract_worker = NodriverWorker(selected, delay=self.v2_delay)
             self.update_status("Starting V2 extraction (Browser)...")
 
         self.extract_worker.status_update.connect(self.update_status)
