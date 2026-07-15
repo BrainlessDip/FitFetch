@@ -45,7 +45,7 @@ from PyQt6.QtGui import QFont, QAction, QIcon
 import traceback
 
 # Version
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 APP_NAME = "FitFetch"
 
 
@@ -84,12 +84,16 @@ class CloudflareBypass:
             self.local.session = self._createSession()
         return self.local.session
 
-    def fetch(self, url):
+    def fetch(self, url, method="GET"):
         """Fetch a single URL"""
         session = self._getSession()
 
         try:
-            r = session.get(url, timeout=30, allow_redirects=True)
+            r = (
+                session.get(url, timeout=30, allow_redirects=True)
+                if method == "GET"
+                else session.post(url, timeout=30, allow_redirects=False)
+            )
             return url, r.text, r.status_code, r.headers
 
         except Exception as e:
@@ -139,9 +143,12 @@ class CloudflareWorker(QThread):
             for i, link in enumerate(self.links, 1):
                 self.msleep(1000)
                 filename = link.split("/")[-1].split("#")[-1]
+                file_id = (re.search(r"fuckingfast\.co/([^#/?]+)", link)).group(1)
                 part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
                 part_num = part_match.group(1) if part_match else "0"
-                _, page_source, status_code, headers = self.cf_bypass.fetch(link)
+                _, page_source, status_code, headers = self.cf_bypass.fetch(
+                    f"https://fuckingfast.co/f/{file_id}/go", method="POST"
+                )
                 self.status_update.emit(
                     f"[{i}/{len(self.links)}] Processing {filename} (Status: {status_code}) - (Part: {part_num})"
                 )
@@ -178,7 +185,8 @@ class CloudflareWorker(QThread):
                         )
                 elif page_source and status_code == 200:
                     # Try to extract link from page source
-                    extracted_url = self._extract_link_from_html(page_source, filename)
+                    # extracted_url = self._extract_link_from_html(page_source, filename)
+                    extracted_url = headers.get("Hx-Redirect")
                     if extracted_url:
                         self.link_found.emit(extracted_url + f"#{filename}")
                         self.status_update.emit(
@@ -281,18 +289,21 @@ class NodriverWorker(QThread):
                     )
                     page_source = await tab.get_content()
 
-                    pattern = (
-                        r'https?://(?:[a-zA-Z0-9-]+\.)*fuckingfast\.co(?:/[^\s"\'<>]*)?'
-                    )
+                    pattern = r'hx-post="/f/([^/"]+)/go"'
 
                     match = re.search(pattern, page_source)
 
                     if match:
-                        extracted_url = (
+                        extracted_file_id = (
                             match.group(1)
                             if len(match.groups()) > 0
                             else match.group(0)
                         )
+                        headers = await tab.evaluate(
+                            f'(async()=>Object.fromEntries((await fetch("/f/{extracted_file_id}/go",{{method:"POST"}})).headers.entries()))()',
+                            await_promise=True,
+                        )
+                        extracted_url = dict(headers)["hx-redirect"]["value"]
                         self.link_found.emit(extracted_url + f"#{filename}")
                         self.status_update.emit(
                             f"Extracted: {filename} - (Part: {part_num})"
@@ -1068,7 +1079,7 @@ class FitFetchApp(QMainWindow):
             </p>
 
             <p>
-              <a href="https://github.com/BrainlessDip">
+              <a href="https://github.com/BrainlessDip/fitfetch">
                 GitHub
               </a>
               &nbsp;|&nbsp;
