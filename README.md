@@ -21,7 +21,7 @@ A modern, dark-themed GUI tool for extracting FuckingFast direct download links 
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.14 or higher
 - pip (Python package manager)
 
 ### Installation
@@ -60,11 +60,12 @@ uv run main.py
 ## Dependencies
 
 ```txt
-PyQt6>=6.4.0
-requests>=2.28.0
-beautifulsoup4>=4.11.0
-undetected-chromedriver>=3.4.0
-lxml>=4.9.0
+beautifulsoup4>=4.15.0
+cloudscraper>=1.2.71
+nodriver>=0.50.3
+pyqt6>=6.11.0
+requests>=2.34.2
+setuptools>=82.0.1
 ```
 
 ## Usage
@@ -79,6 +80,27 @@ lxml>=4.9.0
 2. Press `Extract`
 3. Extracted links will appear in the output section
 
+## Downloading with JDownloader (Recommended)
+
+FitFetch extracts direct download links, making them perfect for use with [JDownloader](https://jdownloader.org/).
+
+### Automatic Link Capture
+
+1. Install and open JDownloader.
+2. Enable the **LinkGrabber** feature (enabled by default).
+3. In FitFetch, extract the download links.
+4. Click **Copy** (or press `Ctrl+C`).
+5. JDownloader will automatically detect the copied links and add them to **LinkGrabber**.
+6. Review the package and click **Start Downloads**.
+
+### Manual Import
+
+If automatic detection is disabled:
+
+1. Copy the extracted links from FitFetch.
+2. In JDownloader, go to **LinkGrabber**.
+3. Click **Add New Links** (or press `Ctrl+V`).
+4. Confirm and start the downloads.
 
 ## Project Structure
 
@@ -117,6 +139,7 @@ To find the `browsers.json` directory, run the following command:
 python -c "import cloudscraper, os; print(os.path.join(os.path.dirname(cloudscraper.__file__), 'user_agent', 'browsers.json'))"
 ```
 ⚠️ This executable may be flagged by some antivirus software due to false positives commonly associated with Nuitka-compiled applications.
+
 
 ### Browser Issues
 - Ensure Google Chrome is installed
