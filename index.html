@@ -1,0 +1,1756 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FitFetch - Extract FitGirl Repack Download Links</title>
+    <meta
+      name="description"
+      content="FitFetch extracts direct download links from FitGirl Repacks in seconds. Fast, open-source, and requires no installation."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      type="image/x-icon"
+      href="https://raw.githubusercontent.com/BrainlessDip/FitFetch/refs/heads/master/favicon.ico"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg-primary: #0a0a0b;
+        --bg-secondary: #111113;
+        --bg-card: rgba(255, 255, 255, 0.03);
+        --bg-card-hover: rgba(255, 255, 255, 0.06);
+        --border-color: rgba(255, 255, 255, 0.08);
+        --border-color-hover: rgba(255, 255, 255, 0.15);
+        --text-primary: #f0f0f0;
+        --text-secondary: #8b8b8e;
+        --text-muted: #5a5a5e;
+        --accent: #4f46e5;
+        --accent-hover: #6366f1;
+        --accent-glow: rgba(79, 70, 229, 0.3);
+        --success: #22c55e;
+        --error: #ef4444;
+        --radius: 12px;
+        --radius-lg: 16px;
+        --radius-xl: 24px;
+        --transition: 0.2s ease;
+        --font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.6;
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--bg-primary);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--text-muted);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      /* Header */
+      header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 100;
+        background: rgba(10, 10, 11, 0.8);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 64px;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      .nav-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        font-size: 1.15rem;
+      }
+
+      .nav-brand img {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        list-style: none;
+      }
+
+      .nav-links a {
+        padding: 6px 14px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        border-radius: 8px;
+        transition:
+          color var(--transition),
+          background var(--transition);
+      }
+
+      .nav-links a:hover {
+        color: var(--text-primary);
+        background: var(--bg-card-hover);
+      }
+
+      .nav-github {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .nav-mobile-toggle {
+        display: none;
+        background: none;
+        border: none;
+        color: var(--text-primary);
+        cursor: pointer;
+        padding: 8px;
+        border-radius: 8px;
+      }
+
+      .nav-mobile-toggle:hover {
+        background: var(--bg-card-hover);
+      }
+
+      /* Hero */
+      .hero {
+        padding: 160px 0 100px;
+        text-align: center;
+        position: relative;
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        top: -200px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 800px;
+        height: 600px;
+        background: radial-gradient(
+          ellipse,
+          var(--accent-glow) 0%,
+          transparent 70%
+        );
+        opacity: 0.4;
+        pointer-events: none;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.5rem, 6vw, 4rem);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        margin-bottom: 20px;
+        animation: fadeInUp 0.6s ease 0.1s both;
+      }
+
+      .hero h1 span {
+        background: linear-gradient(135deg, var(--accent), #818cf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      .hero-tagline {
+        font-size: 1.2rem;
+        color: var(--text-secondary);
+        max-width: 520px;
+        margin: 0 auto 40px;
+        line-height: 1.7;
+        animation: fadeInUp 0.6s ease 0.2s both;
+      }
+
+      .hero-buttons {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        flex-wrap: wrap;
+        animation: fadeInUp 0.6s ease 0.3s both;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 24px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        font-family: var(--font);
+        border-radius: var(--radius);
+        border: none;
+        cursor: pointer;
+        transition: all var(--transition);
+        white-space: nowrap;
+      }
+
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+        box-shadow: 0 0 0 0 var(--accent-glow);
+      }
+
+      .btn-primary:hover {
+        background: var(--accent-hover);
+        box-shadow: 0 0 20px 4px var(--accent-glow);
+        transform: translateY(-1px);
+      }
+
+      .btn-secondary {
+        background: var(--bg-card);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+      }
+
+      .btn-secondary:hover {
+        background: var(--bg-card-hover);
+        border-color: var(--border-color-hover);
+        transform: translateY(-1px);
+      }
+
+      .btn-sm {
+        padding: 8px 16px;
+        font-size: 0.8rem;
+      }
+
+      .btn svg {
+        flex-shrink: 0;
+      }
+
+      /* Sections */
+      section {
+        padding: 80px 0;
+      }
+
+      .section-header {
+        text-align: center;
+        margin-bottom: 48px;
+      }
+
+      .section-label {
+        display: inline-block;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        margin-bottom: 12px;
+      }
+
+      .section-title {
+        font-size: clamp(1.75rem, 4vw, 2.25rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-bottom: 12px;
+      }
+
+      .section-subtitle {
+        font-size: 1.05rem;
+        color: var(--text-secondary);
+        max-width: 560px;
+        margin: 0 auto;
+      }
+
+      /* Features Grid */
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .feature-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 32px;
+        transition: all 0.3s ease;
+      }
+
+      .feature-card:hover {
+        background: var(--bg-card-hover);
+        border-color: var(--border-color-hover);
+        transform: translateY(-2px);
+      }
+
+      .feature-icon {
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(79, 70, 229, 0.1);
+        border: 1px solid rgba(79, 70, 229, 0.2);
+        border-radius: 12px;
+        margin-bottom: 20px;
+        color: var(--accent);
+      }
+
+      .feature-icon svg {
+        width: 22px;
+        height: 22px;
+      }
+
+      .feature-card h3 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .feature-card p {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        line-height: 1.6;
+      }
+
+      /* Release & Stats Sections */
+      .release-grid {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        gap: 20px;
+        align-items: start;
+      }
+
+      .card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+      }
+
+      .card-header {
+        padding: 24px 28px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .card-header h2 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .card-body {
+        padding: 28px;
+      }
+
+      .release-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+
+      .meta-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .meta-label {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .meta-value {
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+
+      .release-notes {
+        margin-bottom: 24px;
+      }
+
+      .release-notes h3 {
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: var(--text-secondary);
+      }
+
+      .release-notes-content {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        line-height: 1.7;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        padding: 16px;
+        max-height: 300px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+      }
+
+      .release-notes-content ul {
+        margin: 8px 0;
+        padding-left: 20px;
+        list-style: none;
+      }
+
+      .release-notes-content ul li {
+        position: relative;
+        padding-left: 8px;
+        margin-bottom: 6px;
+      }
+
+      .release-notes-content ul li::before {
+        content: "•";
+        position: absolute;
+        left: -14px;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .release-notes-content code {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.82em;
+        font-family: "SF Mono", "Fira Code", monospace;
+        color: #e879f9;
+      }
+
+      .release-notes-content strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      .assets-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+
+      .assets-list h3 {
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 4px;
+        color: var(--text-secondary);
+      }
+
+      .asset-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        transition: all var(--transition);
+      }
+
+      .asset-item:hover {
+        border-color: var(--border-color-hover);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .asset-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .asset-name {
+        font-size: 0.85rem;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .asset-details {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+      }
+
+      .release-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      /* Stats */
+      .stats-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .stat-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      .stat-item:last-child {
+        border-bottom: none;
+      }
+
+      .stat-label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .stat-label svg {
+        width: 16px;
+        height: 16px;
+        opacity: 0.5;
+      }
+
+      .stat-value {
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+
+      /* Installation */
+      .install-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .install-card {
+        text-align: center;
+        padding: 40px 28px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        transition: all 0.3s ease;
+      }
+
+      .install-card:hover {
+        background: var(--bg-card-hover);
+        border-color: var(--border-color-hover);
+        transform: translateY(-2px);
+      }
+
+      .install-step {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 48px;
+        height: 48px;
+        background: rgba(79, 70, 229, 0.1);
+        border: 1px solid rgba(79, 70, 229, 0.2);
+        border-radius: 50%;
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 20px;
+      }
+
+      .install-card h3 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .install-card p {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+      }
+
+      /* Footer */
+      footer {
+        border-top: 1px solid var(--border-color);
+        padding: 40px 0;
+      }
+
+      .footer-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      .footer-left {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+
+      .footer-brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+
+      .footer-brand img {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+      }
+
+      .footer-links {
+        display: flex;
+        gap: 20px;
+      }
+
+      .footer-links a {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        transition: color var(--transition);
+      }
+
+      .footer-links a:hover {
+        color: var(--text-primary);
+      }
+
+      .footer-right {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+      }
+
+      /* Skeleton */
+      .skeleton {
+        position: relative;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 6px;
+        color: transparent !important;
+      }
+
+      .skeleton * {
+        visibility: hidden;
+      }
+
+      .skeleton::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.04),
+          transparent
+        );
+        animation: shimmer 1.5s infinite;
+      }
+
+      .skeleton-text {
+        height: 14px;
+        margin-bottom: 10px;
+        width: 100%;
+      }
+
+      .skeleton-text.w-60 {
+        width: 60%;
+      }
+      .skeleton-text.w-40 {
+        width: 40%;
+      }
+      .skeleton-text.w-80 {
+        width: 80%;
+      }
+      .skeleton-text.h-20 {
+        height: 20px;
+      }
+      .skeleton-text.h-24 {
+        height: 24px;
+      }
+
+      .skeleton-box {
+        height: 60px;
+      }
+
+      .skeleton-card {
+        padding: 24px;
+      }
+
+      .error-state {
+        text-align: center;
+        padding: 40px 20px;
+      }
+
+      .error-state p {
+        color: var(--text-secondary);
+        margin-bottom: 16px;
+        font-size: 0.9rem;
+      }
+
+      /* Animations */
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes shimmer {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
+      .fade-in {
+        opacity: 0;
+        transform: translateY(20px);
+        transition:
+          opacity 0.5s ease,
+          transform 0.5s ease;
+      }
+
+      .fade-in.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* Mobile Nav */
+      .mobile-menu {
+        display: none;
+        position: fixed;
+        top: 64px;
+        left: 0;
+        right: 0;
+        background: rgba(10, 10, 11, 0.95);
+        backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border-color);
+        padding: 16px 24px;
+        z-index: 99;
+      }
+
+      .mobile-menu.open {
+        display: block;
+      }
+
+      .mobile-menu a {
+        display: block;
+        padding: 12px 16px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        border-radius: 8px;
+        transition: all var(--transition);
+      }
+
+      .mobile-menu a:hover {
+        color: var(--text-primary);
+        background: var(--bg-card-hover);
+      }
+
+      /* Responsive */
+      @media (max-width: 1024px) {
+        .features-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .release-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .install-grid {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      @media (max-width: 900px) {
+        .features-grid,
+        .install-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .release-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .section-title {
+          font-size: 1.75rem;
+        }
+
+        .section-subtitle {
+          font-size: 0.95rem;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .nav-links {
+          display: none;
+        }
+
+        .nav-mobile-toggle {
+          display: flex;
+        }
+
+        .hero {
+          padding: 120px 0 60px;
+        }
+
+        .hero h1 {
+          font-size: 2.2rem;
+        }
+
+        .hero-tagline {
+          font-size: 1rem;
+          max-width: 100%;
+        }
+
+        section {
+          padding: 50px 0;
+        }
+
+        .features-grid,
+        .install-grid {
+          grid-template-columns: repeat(2, 1fr);
+          gap: 16px;
+        }
+
+        .feature-card,
+        .install-card {
+          padding: 24px;
+        }
+
+        .card-body {
+          padding: 20px;
+        }
+
+        .card-header {
+          padding: 16px 20px;
+        }
+
+        .footer-content {
+          flex-direction: column;
+          text-align: center;
+        }
+
+        .footer-left {
+          flex-direction: column;
+          gap: 12px;
+        }
+      }
+
+      @media (max-width: 600px) {
+        .container {
+          padding: 0 16px;
+        }
+
+        .hero {
+          padding: 100px 0 50px;
+        }
+
+        .hero h1 {
+          font-size: 1.85rem;
+        }
+
+        .hero-tagline {
+          font-size: 0.95rem;
+          margin-bottom: 32px;
+        }
+
+        .features-grid,
+        .install-grid {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .feature-card,
+        .install-card {
+          padding: 20px;
+        }
+
+        .section-header {
+          margin-bottom: 32px;
+        }
+
+        .section-title {
+          font-size: 1.5rem;
+        }
+
+        .release-meta {
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .meta-item {
+          flex-direction: row;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .hero-buttons {
+          flex-direction: column;
+          width: 100%;
+          gap: 12px;
+        }
+
+        .hero-buttons .btn {
+          width: 100%;
+          justify-content: center;
+        }
+
+        .asset-item {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 10px;
+        }
+
+        .asset-item .btn {
+          align-self: flex-end;
+        }
+
+        .release-actions {
+          flex-direction: column;
+        }
+
+        .release-actions .btn {
+          width: 100%;
+          justify-content: center;
+        }
+
+        .install-step {
+          width: 40px;
+          height: 40px;
+          font-size: 1rem;
+        }
+
+        .install-card h3 {
+          font-size: 0.95rem;
+        }
+
+        .install-card p {
+          font-size: 0.8rem;
+        }
+
+        footer {
+          padding: 30px 0;
+        }
+
+        .footer-links {
+          gap: 16px;
+        }
+      }
+
+      @media (max-width: 380px) {
+        .hero h1 {
+          font-size: 1.6rem;
+        }
+
+        .btn {
+          padding: 10px 18px;
+          font-size: 0.82rem;
+        }
+
+        .btn-sm {
+          padding: 8px 14px;
+          font-size: 0.78rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="#" class="nav-brand">
+          <img
+            src="https://raw.githubusercontent.com/BrainlessDip/FitFetch/refs/heads/master/favicon.ico"
+            alt="FitFetch"
+            width="28"
+            height="28"
+          />
+          FitFetch
+        </a>
+        <ul class="nav-links">
+          <li><a href="#features">Features</a></li>
+          <li><a href="#release">Release</a></li>
+          <li><a href="#install">Install</a></li>
+          <li>
+            <a
+              href="https://github.com/BrainlessDip/fitfetch"
+              target="_blank"
+              class="nav-github"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"
+                />
+              </svg>
+              GitHub
+            </a>
+          </li>
+        </ul>
+        <button
+          class="nav-mobile-toggle"
+          onclick="
+            document.getElementById('mobileMenu').classList.toggle('open')
+          "
+          aria-label="Toggle menu"
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+      </nav>
+      <div class="mobile-menu" id="mobileMenu">
+        <a
+          href="#features"
+          onclick="
+            document.getElementById('mobileMenu').classList.remove('open')
+          "
+          >Features</a
+        >
+        <a
+          href="#release"
+          onclick="
+            document.getElementById('mobileMenu').classList.remove('open')
+          "
+          >Release</a
+        >
+        <a
+          href="#install"
+          onclick="
+            document.getElementById('mobileMenu').classList.remove('open')
+          "
+          >Install</a
+        >
+        <a href="https://github.com/BrainlessDip/fitfetch" target="_blank"
+          >GitHub</a
+        >
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container">
+          <h1><span>FitFetch</span></h1>
+          <p class="hero-tagline">
+            Extract direct download links from FitGirl Repacks in seconds.
+          </p>
+          <div class="hero-buttons">
+            <a href="#" class="btn btn-primary" id="heroDownloadBtn">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Download Latest Release
+            </a>
+            <a
+              href="https://github.com/BrainlessDip/fitfetch"
+              target="_blank"
+              class="btn btn-secondary"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                width="18"
+                height="18"
+              >
+                <path
+                  d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"
+                />
+              </svg>
+              View GitHub
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section id="features">
+        <div class="container">
+          <div class="section-header fade-in">
+            <span class="section-label">Features</span>
+            <h2 class="section-title">Everything you need</h2>
+            <p class="section-subtitle">
+              Fast, reliable, and built for speed. FitFetch handles the heavy
+              lifting so you don't have to.
+            </p>
+          </div>
+          <div class="features-grid">
+            <div class="feature-card fade-in">
+              <div class="feature-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+              </div>
+              <h3>Fast Extraction</h3>
+              <p>
+                Parse and extract direct download links in seconds with
+                optimized parallel processing.
+              </p>
+            </div>
+            <div class="feature-card fade-in">
+              <div class="feature-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </div>
+              <h3>Cloudflare Bypass</h3>
+              <p>
+                Intelligent challenge handling that works seamlessly behind
+                Cloudflare protection.
+              </p>
+            </div>
+            <div class="feature-card fade-in">
+              <div class="feature-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+                  />
+                </svg>
+              </div>
+              <h3>Multiple Engines</h3>
+              <p>
+                Supports multiple extraction engines to ensure maximum
+                compatibility and success rate.
+              </p>
+            </div>
+            <div class="feature-card fade-in">
+              <div class="feature-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"
+                  />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </div>
+              <h3>Open Source</h3>
+              <p>
+                Fully open source under the AGPL-3.0 license. Inspect, modify,
+                and contribute freely.
+              </p>
+            </div>
+            <div class="feature-card fade-in">
+              <div class="feature-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+              </div>
+              <h3>Windows Executable</h3>
+              <p>
+                Native Windows .exe — runs directly on your system without
+                additional dependencies.
+              </p>
+            </div>
+            <div class="feature-card fade-in">
+              <div class="feature-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
+                  />
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                  <line x1="12" y1="22.08" x2="12" y2="12" />
+                </svg>
+              </div>
+              <h3>No Installation</h3>
+              <p>
+                Portable executable — just download and run. No setup, no
+                registry, no clutter.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="release">
+        <div class="container">
+          <div class="section-header fade-in">
+            <span class="section-label">Latest Release</span>
+            <h2 class="section-title">Download FitFetch</h2>
+            <p class="section-subtitle">
+              Always get the latest version directly from GitHub.
+            </p>
+          </div>
+          <div class="release-grid">
+            <div class="card fade-in" id="releaseCard">
+              <div class="card-header">
+                <h2>
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--accent)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Release Details
+                </h2>
+                <span
+                  id="releaseTag"
+                  class="skeleton skeleton-text w-40"
+                  style="display: inline-block"
+                  >&nbsp;</span
+                >
+              </div>
+              <div class="card-body" id="releaseBody">
+                <div class="skeleton skeleton-card">
+                  <div class="release-meta">
+                    <div class="meta-item">
+                      <div class="skeleton skeleton-text w-60 h-20">&nbsp;</div>
+                    </div>
+                    <div class="meta-item">
+                      <div class="skeleton skeleton-text w-60 h-20">&nbsp;</div>
+                    </div>
+                  </div>
+                  <div class="skeleton skeleton-text w-80 h-24">&nbsp;</div>
+                  <div class="skeleton skeleton-text w-80">&nbsp;</div>
+                  <div class="skeleton skeleton-text w-60">&nbsp;</div>
+                  <div style="height: 16px"></div>
+                  <div class="skeleton skeleton-text w-40 h-24">&nbsp;</div>
+                  <div
+                    class="skeleton skeleton-box"
+                    style="margin-bottom: 10px"
+                  >
+                    &nbsp;
+                  </div>
+                  <div class="skeleton skeleton-box">&nbsp;</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card fade-in" id="statsCard">
+              <div class="card-header">
+                <h2>
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--accent)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="12" y1="20" x2="12" y2="10" />
+                    <line x1="18" y1="20" x2="18" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="16" />
+                  </svg>
+                  GitHub Stats
+                </h2>
+              </div>
+              <div class="card-body">
+                <div class="stats-grid" id="statsBody">
+                  <div class="skeleton skeleton-text w-80">&nbsp;</div>
+                  <div class="skeleton skeleton-text w-60">&nbsp;</div>
+                  <div class="skeleton skeleton-text w-80">&nbsp;</div>
+                  <div class="skeleton skeleton-text w-60">&nbsp;</div>
+                  <div class="skeleton skeleton-text w-80">&nbsp;</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install">
+        <div class="container">
+          <div class="section-header fade-in">
+            <span class="section-label">Installation</span>
+            <h2 class="section-title">Get started in 3 steps</h2>
+            <p class="section-subtitle">
+              No complex setup required. Download, open, and go.
+            </p>
+          </div>
+          <div class="install-grid">
+            <div class="install-card fade-in">
+              <div class="install-step">1</div>
+              <h3>Download</h3>
+              <p>Grab the latest release from above or directly from GitHub.</p>
+            </div>
+            <div class="install-card fade-in">
+              <div class="install-step">2</div>
+              <h3>Open FitFetch</h3>
+              <p>
+                Run the executable. No installation needed — it's fully
+                portable.
+              </p>
+            </div>
+            <div class="install-card fade-in">
+              <div class="install-step">3</div>
+              <h3>Extract Links</h3>
+              <p>
+                Paste a FitGirl repack URL and instantly get direct download
+                links.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-left">
+            <span class="footer-brand">
+              <img
+                src="https://raw.githubusercontent.com/BrainlessDip/FitFetch/refs/heads/master/favicon.ico"
+                alt="FitFetch"
+                width="20"
+                height="20"
+              />
+              FitFetch
+            </span>
+            <div class="footer-links">
+              <a href="https://github.com/BrainlessDip/fitfetch" target="_blank"
+                >GitHub</a
+              >
+              <a
+                href="https://github.com/BrainlessDip/fitfetch/blob/master/LICENSE"
+                target="_blank"
+                >AGPL-3.0</a
+              >
+            </div>
+          </div>
+          <div class="footer-right">
+            <span id="footerYear"></span> FitFetch &middot; Made with
+            &#10084;&#65039; by <a href="https://github.com/BrainlessDip" target="_blank" style="color:var(--text-secondary);text-decoration:underline;text-underline-offset:2px;">BrainlessDip</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      const CACHE_PREFIX = "fitfetch_";
+      const CACHE_TTL = 5 * 60 * 1000;
+
+      function getCached(key) {
+        try {
+          const raw = localStorage.getItem(CACHE_PREFIX + key);
+          if (!raw) return null;
+          const { data, ts } = JSON.parse(raw);
+          if (Date.now() - ts > CACHE_TTL) {
+            localStorage.removeItem(CACHE_PREFIX + key);
+            return null;
+          }
+          return data;
+        } catch {
+          return null;
+        }
+      }
+
+      function setCache(key, data) {
+        try {
+          localStorage.setItem(
+            CACHE_PREFIX + key,
+            JSON.stringify({ data, ts: Date.now() }),
+          );
+        } catch {}
+      }
+
+      async function fetchJSON(url) {
+        const cached = getCached(url);
+        if (cached) return cached;
+        const res = await fetch(url, {
+          headers: { Accept: "application/vnd.github.v3+json" },
+        });
+        if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+        const data = await res.json();
+        setCache(url, data);
+        return data;
+      }
+
+      function formatSize(bytes) {
+        if (!bytes) return "N/A";
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+        if (bytes < 1024 * 1024 * 1024)
+          return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+      }
+
+      function formatDate(dateStr) {
+        if (!dateStr) return "N/A";
+        return new Date(dateStr).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      document.getElementById("footerYear").textContent =
+        new Date().getFullYear();
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              e.target.classList.add("visible");
+              observer.unobserve(e.target);
+            }
+          });
+        },
+        { threshold: 0.1 },
+      );
+
+      document
+        .querySelectorAll(".fade-in")
+        .forEach((el) => observer.observe(el));
+
+      function parseReleaseNotes(text) {
+        if (!text) return "";
+        const lines = text.split("\n");
+        let html = "";
+        let inList = false;
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (/^\*\s+/.test(trimmed)) {
+            if (!inList) {
+              html += "<ul>";
+              inList = true;
+            }
+            let content = trimmed.replace(/^\*\s+/, "");
+            content = content.replace(/`([^`]+)`/g, "<code>$1</code>");
+            content = content.replace(
+              /\*\*([^*]+)\*\*/g,
+              "<strong>$1</strong>",
+            );
+            html += `<li>${content}</li>`;
+          } else {
+            if (inList) {
+              html += "</ul>";
+              inList = false;
+            }
+            if (trimmed) {
+              let content = trimmed;
+              content = content.replace(/`([^`]+)`/g, "<code>$1</code>");
+              content = content.replace(
+                /\*\*([^*]+)\*\*/g,
+                "<strong>$1</strong>",
+              );
+              html += `<p>${content}</p>`;
+            } else {
+              html += "<br>";
+            }
+          }
+        }
+
+        if (inList) html += "</ul>";
+        return html;
+      }
+
+      async function loadRelease() {
+        const body = document.getElementById("releaseBody");
+        const tag = document.getElementById("releaseTag");
+        const heroBtn = document.getElementById("heroDownloadBtn");
+
+        try {
+          const data = await fetchJSON(
+            "https://api.github.com/repos/BrainlessDip/fitfetch/releases/latest",
+          );
+
+          tag.className = "";
+          tag.textContent = data.tag_name || data.name || "Latest";
+
+          let exeAsset = data.assets.find((a) => /\.exe$/i.test(a.name));
+          if (!exeAsset && data.assets.length > 0) exeAsset = data.assets[0];
+
+          if (exeAsset) {
+            heroBtn.href = exeAsset.browser_download_url;
+          }
+
+          const totalDownloads = data.assets.reduce(
+            (sum, a) => sum + (a.download_count || 0),
+            0,
+          );
+
+          let virusTotalBtn = "";
+          if (data.body && /virustotal\.com/i.test(data.body)) {
+            const vtMatch = data.body.match(
+              /https?:\/\/[^\s]*virustotal\.com[^\s]*/i,
+            );
+            if (vtMatch) {
+              virusTotalBtn = `<a href="${escapeHtml(vtMatch[0])}" target="_blank" class="btn btn-secondary btn-sm" style="margin-left:4px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              VirusTotal Scan
+            </a>`;
+            }
+          }
+
+          let notesHtml = "";
+          if (data.body && data.body.trim()) {
+            notesHtml = `
+            <div class="release-notes">
+              <h3>Release Notes</h3>
+              <div class="release-notes-content">${parseReleaseNotes(data.body.trim())}</div>
+            </div>`;
+          }
+
+          let assetsHtml = "";
+          if (data.assets.length > 0) {
+            const items = data.assets
+              .map(
+                (a) => `
+            <div class="asset-item">
+              <div class="asset-info">
+                <span class="asset-name">${escapeHtml(a.name)}</span>
+                <span class="asset-details">${formatSize(a.size)} &middot; ${a.download_count} downloads</span>
+              </div>
+              <a href="${a.browser_download_url}" class="btn btn-secondary btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download
+              </a>
+            </div>`,
+              )
+              .join("");
+
+            assetsHtml = `
+            <div class="assets-list">
+              <h3>Assets (${data.assets.length})</h3>
+              ${items}
+            </div>`;
+          }
+
+          body.innerHTML = `
+          <div class="release-meta">
+            <div class="meta-item">
+              <span class="meta-label">Published</span>
+              <span class="meta-value">${formatDate(data.published_at)}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Total Downloads</span>
+              <span class="meta-value">${totalDownloads.toLocaleString()}</span>
+            </div>
+          </div>
+          ${notesHtml}
+          ${assetsHtml}
+          <div class="release-actions">
+            ${
+              exeAsset
+                ? `<a href="${exeAsset.browser_download_url}" class="btn btn-primary btn-sm">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download ${escapeHtml(exeAsset.name)}
+                </a>`
+                : ""
+            }
+            <a href="${data.html_url}" target="_blank" class="btn btn-secondary btn-sm">View on GitHub</a>
+            ${virusTotalBtn}
+          </div>`;
+        } catch (err) {
+          tag.className = "";
+          tag.textContent = "Error";
+          body.innerHTML = `
+          <div class="error-state">
+            <p>Unable to load release information. This may be due to GitHub API rate limits.</p>
+            <button class="btn btn-secondary btn-sm" onclick="location.reload()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Retry
+            </button>
+          </div>`;
+        }
+      }
+
+      async function loadStats() {
+        const container = document.getElementById("statsBody");
+        try {
+          const data = await fetchJSON(
+            "https://api.github.com/repos/BrainlessDip/fitfetch",
+          );
+
+          const licenseName = data.license ? data.license.spdx_id : "N/A";
+          const updatedAt = data.pushed_at || data.updated_at;
+
+          container.innerHTML = `
+          <div class="stat-item">
+            <span class="stat-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              Stars
+            </span>
+            <span class="stat-value">${(data.stargazers_count || 0).toLocaleString()}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
+              Forks
+            </span>
+            <span class="stat-value">${(data.forks_count || 0).toLocaleString()}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              Open Issues
+            </span>
+            <span class="stat-value">${(data.open_issues_count || 0).toLocaleString()}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Last Updated
+            </span>
+            <span class="stat-value">${formatDate(updatedAt)}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              License
+            </span>
+            <span class="stat-value">${escapeHtml(licenseName)}</span>
+          </div>`;
+        } catch (err) {
+          container.innerHTML = `
+          <div class="error-state" style="padding:20px">
+            <p>Unable to load stats.</p>
+            <button class="btn btn-secondary btn-sm" onclick="loadStats()">Retry</button>
+          </div>`;
+        }
+      }
+
+      loadRelease();
+      loadStats();
+    </script>
+  </body>
+</html>
