@@ -119,11 +119,7 @@ To build the executable (.exe), run the following command:
 pyinstaller --onefile --windowed --clean --noconfirm --name FitFetch --icon favicon.ico --optimize 2 --strip  --add-data "favicon.ico;." main.py
 ```
 
-To find the `browsers.json` directory, run the following command:
-```
-python -c "import cloudscraper, os; print(os.path.join(os.path.dirname(cloudscraper.__file__), 'user_agent', 'browsers.json'))"
-```
-⚠️ This executable may be flagged by some antivirus software due to false positives commonly associated with Nuitka-compiled applications.
+⚠️ This executable may be flagged by some antivirus software due to false positives commonly associated with pyinstaller compiled applications.
 
 
 ### Browser Issues
