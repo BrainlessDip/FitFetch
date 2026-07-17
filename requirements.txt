@@ -2,5 +2,5 @@ beautifulsoup4>=4.15.0
 pyqt6>=6.11.0
 requests>=2.34.2
 setuptools>=82.0.1
-nodriver>=0.50.3
+zendriver>=0.15.5
 cloudscraper>=1.2.71

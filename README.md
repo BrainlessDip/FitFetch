@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.14+-green.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 
-A modern, dark-themed GUI tool for extracting FuckingFast direct download links from FitGirl repack pages. Built with PyQt6 and nodriver
+A modern, dark-themed GUI tool for extracting FuckingFast direct download links from FitGirl repack pages. Built with PyQt6 and zendriver
 
 ## Features
 
@@ -12,7 +12,6 @@ A modern, dark-themed GUI tool for extracting FuckingFast direct download links 
 - **Modern UI**: Clean, dark GitHub-inspired interface
 - **Smart Detection**: Automatically finds and lists all parts
 - **Selective Extraction**: Choose specific parts to extract
-- **Copy to Clipboard**: Quick copy with Ctrl+C
 - **Save to File**: Export links with timestamped filenames
 - **Click to Select**: Click on filenames to toggle selection
 - **Progress Tracking**: Real-time progress bar and status updates
@@ -61,11 +60,11 @@ uv run main.py
 
 ```txt
 beautifulsoup4>=4.15.0
-cloudscraper>=1.2.71
-nodriver>=0.50.3
 pyqt6>=6.11.0
 requests>=2.34.2
 setuptools>=82.0.1
+zendriver>=0.15.5
+cloudscraper>=1.2.71
 ```
 
 ## Usage
@@ -109,29 +108,15 @@ fitfetch/
 ├── main.py              # Main application file
 ├── requirements.txt     # Python dependencies
 ├── README.md           # This file
-├── LICENSE             # MIT License
+├── LICENSE             # AGPL-3.0 License
 └── screenshot.png      # Application screenshot
-```
-
-## Troubleshooting
-
-### NoDriver Issue (For now)
-
-SyntaxError: Non-UTF-8 code starting with '\xb1' on line 1345, but no encoding declared; see https://peps.python.org/pep-0263/ for details
-
-```bash
-iconv -f ISO-8859-15 -t UTF-8 -o /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py.new /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py mv -f /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py.new /app/.venv/lib/python3.14/site-packages/nodriver/cdp/network.py
-```
-
-```poweshell
-$src=".venv\Lib\site-packages\nodriver\cdp\network.py"; $dst="$src.new"; Get-Content $src -Encoding Latin1 | Set-Content $dst -Encoding utf8; Move-Item -Force $dst $src
 ```
 
 ## Build
 
 To build the executable (.exe), run the following command:
 ```bash
-nuitka --standalone --windows-console-mode=disable --enable-plugin=pyqt6 --enable-plugin=upx --lto=yes --remove-output --show-progress --jobs=12 --windows-icon-from-ico=./favicon.ico --windows-disable-console --include-package=cloudscraper --include-package=requests --include-package=bs4 --include-package=nodriver --include-package=PyQt6 --include-package=urllib3 --include-data-dir="path/browsers.json" --assume-yes --include-data-file=favicon.ico=favicon.ico --onefile-no-compression main.py
+pyinstaller --onefile --windowed --clean --noconfirm --name FitFetch --icon favicon.ico --optimize 2 --strip  --add-data "favicon.ico;." main.py
 ```
 
 To find the `browsers.json` directory, run the following command:
@@ -152,6 +137,23 @@ python -c "import cloudscraper, os; print(os.path.join(os.path.dirname(cloudscra
 ### Permission Issues
 - On some systems, you may need to run with administrative privileges
 - Ensure you have write permissions for saving files
+
+## Acknowledgements
+
+This project was inspired by the excellent work of **FitGirl FF Link Extractor** by **zouhirdev**:
+
+- https://github.com/zouhirdev/fitgirl-ff-link-extractor
+
+FitFetch started as a personal rewrite with a different approach while building upon the original idea. It introduces several improvements, including:
+
+- **Dual extraction engines** (V1 for speed, V2 for improved reliability)
+- **Configurable extraction delay** to help avoid rate limits
+- **Modern dark UI**
+- **Part selection and batch extraction**
+- **Improved progress reporting and status updates**
+- **Quality-of-life features** such as copy, save, and update checking
+
+A huge thank you to [zouhirdev](https://github.com/zouhirdev) for creating the original project and sharing it with the community. Without that work, FitFetch would not exist in its current form. I will always be grateful for the inspiration and foundation it provided.
 
 ## Contributing
 

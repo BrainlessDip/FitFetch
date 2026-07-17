@@ -19,7 +19,7 @@ import cloudscraper
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
-import nodriver as uc
+import zendriver as zd
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -50,7 +50,7 @@ from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices
 import traceback
 
 # APP DETAILS
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 APP_NAME = "FitFetch"
 OWNER = "BrainlessDip"
 
@@ -102,7 +102,7 @@ class CloudflareBypass:
             )
             return url, r.text, r.status_code, r.headers
 
-        except Exception as e:
+        except Exception:
             return url, None, None, None
 
     def fetchMany(self, urls):
@@ -167,7 +167,7 @@ class CloudflareWorker(QThread):
                     if retry_after:
                         try:
                             retry_seconds = int(retry_after)
-                        except:
+                        except Exception:
                             retry_seconds = 60
                     else:
                         retry_seconds = 60
@@ -233,12 +233,12 @@ class CloudflareWorker(QThread):
             if match:
                 return match.group(1) if len(match.groups()) > 0 else match.group(0)
             return None
-        except:
+        except Exception:
             return None
 
 
-class NodriverWorker(QThread):
-    """Worker thread for nodriver extraction (V2)"""
+class ZendriverWorker(QThread):
+    """Worker thread for zendriver extraction (V2)"""
 
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
@@ -252,37 +252,38 @@ class NodriverWorker(QThread):
         self.direct_links = []
         self.total_links = 0
         self.delay = delay
-        self.loop = None
         self.browser = None
+        self._shutdown_requested = False
 
     def run(self):
         try:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self._async_run())
+            asyncio.run(self._async_run())
         except Exception as e:
-            self.error_occurred.emit(f"Nodriver error: {type(e).__name__}: {e}")
-        finally:
-            if self.loop:
-                self.loop.close()
+            self.error_occurred.emit(f"Zendriver error: {type(e).__name__}: {e}")
 
     async def _async_run(self):
         try:
             self.status_update.emit("Initializing browser (V2)...")
+            self.total_links = len(self.links)
 
-            self.browser = await uc.start(
+            self.browser = await zd.start(
                 headless=False,
-                window_size=(1200, 800),
-                no_sandbox=True,
-                disable_gpu=True,
+                browser_args=[
+                    "--window-size=500,550",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-extensions",
+                    "--disable-sync",
+                    "--disable-background-networking",
+                    "--disable-popup-blocking",
+                ],
             )
 
             self.status_update.emit(f"Processing {len(self.links)} links...")
             tab = await self.browser.get("https://fuckingfast.co")
 
-            await tab.sleep(3)
+            await tab.wait_for_ready_state("complete")
 
-            self.total_links = len(self.links)
             for i, link in enumerate(self.links, 1):
                 filename = link.split("/")[-1].split("#")[-1]
                 file_id = (re.search(r"fuckingfast\.co/([^#/?]+)", link)).group(1)
@@ -301,7 +302,7 @@ class NodriverWorker(QThread):
                             f'(async()=>Object.fromEntries((await fetch("/f/{file_id}/go",{{method:"POST"}})).headers.entries()))()',
                             await_promise=True,
                         )
-                        extracted_url = dict(headers)["hx-redirect"]["value"]
+                        extracted_url = headers["hx-redirect"]
                         self.direct_links.append(extracted_url)
                         self.link_found.emit(extracted_url + f"#{filename}")
                         self.status_update.emit(
@@ -334,7 +335,7 @@ class NodriverWorker(QThread):
                 self.progress_update.emit(i)
 
                 # Add delay between requests to avoid rate limiting
-                if i < len(self.links):
+                if i < len(self.links) and not self._shutdown_requested:
                     delay_sec = self.delay / 1000
                     self.status_update.emit(
                         f"Waiting {delay_sec} seconds before next request... - [{i}/{self.total_links}]"
@@ -355,7 +356,7 @@ class NodriverWorker(QThread):
                     )
                     self.direct_links.clear()
                     await self.browser.stop()
-                except:
+                except Exception:
                     pass
 
 
@@ -1239,7 +1240,7 @@ class FitFetchApp(QMainWindow):
             <h3>Features</h3>
             <ul>
               <li><b>V1 (Cloudflare):</b> Fast concurrent extraction using cloudscraper</li>
-              <li><b>V2 (Browser):</b> Fallback using nodriver for Cloudflare challenges</li>
+              <li><b>V2 (Browser):</b> Fallback using zendriver for Cloudflare challenges</li>
               <li>Modern dark-themed interface</li>
               <li>Select or deselect individual parts</li>
               <li>One-click clipboard copying</li>
@@ -1248,7 +1249,7 @@ class FitFetchApp(QMainWindow):
             </ul>
 
             <p>
-              Built with <b>PyQt6</b>, <b>cloudscraper</b> and <b>nodriver</b>.
+              Built with <b>PyQt6</b>, <b>cloudscraper</b> and <b>zendriver</b>.
             </p>
 
             <hr>
@@ -1300,7 +1301,7 @@ class FitFetchApp(QMainWindow):
             <h3>Step 3: Extract Direct Links</h3>
             <ul>
               <li><b>Extract V1 (Cloudflare):</b> Fast method using cloudscraper. Works when the site is not heavily Cloudflare-protected.</li>
-              <li><b>Extract V2 (Browser):</b> Uses a real browser (nodriver) to bypass Cloudflare challenges. Slower but more reliable for protected pages.</li>
+              <li><b>Extract V2 (Browser):</b> Uses a real browser (zendriver) to bypass Cloudflare challenges. Slower but more reliable for protected pages.</li>
             </ul>
             <p>Choose V2 if V1 fails with Cloudflare errors.</p>
 
@@ -1610,7 +1611,7 @@ class FitFetchApp(QMainWindow):
                 if match:
                     return int(match.group(1))
                 return 0
-            except:
+            except Exception:
                 return 0
 
         sorted_links = sorted(links, key=extract_number)
@@ -1639,7 +1640,7 @@ class FitFetchApp(QMainWindow):
             # Checkbox with click support
             checkbox = ClickableCheckBox("")
             checkbox.stateChanged.connect(
-                lambda state, l=link: self.on_checkbox_changed(l, state)
+                lambda state, ref=link: self.on_checkbox_changed(ref, state)
             )
             self.checkbox_links[checkbox] = link
 
@@ -1759,7 +1760,7 @@ class FitFetchApp(QMainWindow):
             )
             self.update_status("Starting V1 extraction (Cloudflare bypass)...")
         else:
-            self.extract_worker = NodriverWorker(selected, delay=self.v2_delay)
+            self.extract_worker = ZendriverWorker(selected, delay=self.v2_delay)
             self.update_status("Starting V2 extraction (Browser)...")
 
         self.extract_worker.status_update.connect(self.update_status)
@@ -1850,17 +1851,28 @@ class FitFetchApp(QMainWindow):
             and self.extract_worker
             and self.extract_worker.isRunning()
         ):
-            self.extract_worker.terminate()
-            self.extract_worker.wait()
+            self.extract_worker._shutdown_requested = True
+            self.extract_worker.wait(5000)
+            if self.extract_worker.isRunning():
+                self.extract_worker.terminate()
+                self.extract_worker.wait()
 
         event.accept()
+
+
+def resource_path(relative_path):
+    if getattr(sys, "frozen", False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle(QStyleFactory.create("Fusion"))
-    app.setWindowIcon(QIcon("favicon.ico"))
+    app.setWindowIcon(QIcon(resource_path("favicon.ico")))
 
     window = FitFetchApp()
     window.show()
