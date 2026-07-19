@@ -10,17 +10,11 @@ import sys
 import re
 import os
 import asyncio
+import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import cloudscraper
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import requests
-from bs4 import BeautifulSoup
-import zendriver as zd
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -49,71 +43,110 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QUrl, QTimer
 from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices, QPixmap
-import traceback
 
-# APP DETAILS
-VERSION = "1.1.2"
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+LOG_LEVEL = logging.DEBUG if os.environ.get("FITFETCH_DEBUG") else logging.WARNING
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("FitFetch")
+
+
+VERSION = "1.2.0"
 APP_NAME = "FitFetch"
 OWNER = "BrainlessDip"
 
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+REQUEST_TIMEOUT = 10
+CF_TIMEOUT = 30
+MAX_CF_THREADS = 10
+STARTUP_UPDATE_DELAY_MS = 1500
+CLOSE_WAIT_MS = 3000
+
+# Pre-compiled regexes
+RE_PART_NUM = re.compile(r"part(\d+)", re.IGNORECASE)
+RE_FILE_ID = re.compile(r"fuckingfast\.co/([^#/?]+)")
+RE_FITGIRL_URL = re.compile(
+    r"^https?://(?:www\.)?fitgirl-repacks\.site/[a-zA-Z0-9\-_]+(?:/[a-zA-Z0-9\-_/]*)?/?$",
+    re.IGNORECASE,
+)
+RE_EXTRACT_LINK = re.compile(
+    r'https?://(?:[a-zA-Z0-9-]+\.)*fuckingfast\.co(?:/[^\s"\'<>]*)?'
+)
+RE_RATE_LIMIT = re.compile(r"part(\d+)", re.IGNORECASE)
+
+
+def _extract_filename(url: str) -> str:
+    """Extract filename from URL, stripping fragment."""
+    return url.split("/")[-1].split("#")[-1]
+
+
+def _extract_part_num(filename: str) -> str:
+    """Extract part number string from filename, or '0'."""
+    m = RE_PART_NUM.search(filename)
+    return m.group(1) if m else "0"
+
 
 class CloudflareBypass:
-    """Handles Cloudflare protected pages with cloudscraper and retry strategy"""
+    """Handles Cloudflare protected pages with cloudscraper and retry strategy."""
 
-    def __init__(self, threads=10):
+    def __init__(self, threads: int = MAX_CF_THREADS):
         self.threads = threads
         self.local = threading.local()
-        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    def _createSession(self):
+    def _create_session(self):
+        import cloudscraper
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+
         scraper = cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows", "mobile": False}
         )
-        scraper.headers.update({"User-Agent": self.user_agent})
-
-        retryStrategy = Retry(
+        scraper.headers.update({"User-Agent": DEFAULT_USER_AGENT})
+        retry_strategy = Retry(
             total=5,
             backoff_factor=1.5,
             status_forcelist=[500, 502, 503, 504],
             allowed_methods=["GET", "POST"],
         )
-
         adapter = HTTPAdapter(
-            max_retries=retryStrategy, pool_connections=100, pool_maxsize=100
+            max_retries=retry_strategy, pool_connections=100, pool_maxsize=100
         )
-
         scraper.mount("http://", adapter)
         scraper.mount("https://", adapter)
-
         return scraper
 
-    def _getSession(self):
+    def _get_session(self):
         if not hasattr(self.local, "session"):
-            self.local.session = self._createSession()
+            self.local.session = self._create_session()
         return self.local.session
 
-    def fetch(self, url, method="GET"):
-        """Fetch a single URL"""
-        session = self._getSession()
-
+    def fetch(self, url: str, method: str = "GET"):
+        """Fetch a single URL. Returns (url, text, status_code, headers)."""
+        session = self._get_session()
         try:
             r = (
-                session.get(url, timeout=30, allow_redirects=True)
+                session.get(url, timeout=CF_TIMEOUT, allow_redirects=True)
                 if method == "GET"
-                else session.post(url, timeout=30, allow_redirects=False)
+                else session.post(url, timeout=CF_TIMEOUT, allow_redirects=False)
             )
             return url, r.text, r.status_code, r.headers
-
-        except Exception:
+        except Exception as exc:
+            logger.debug("Fetch failed for %s: %s", url, exc)
             return url, None, None, None
 
-    def fetchMany(self, urls):
-        """Fetch multiple URLs concurrently"""
+    def fetch_many(self, urls: list[str]) -> dict:
+        """Fetch multiple URLs concurrently."""
         results = {}
-
         with ThreadPoolExecutor(max_workers=self.threads) as executor:
-            futures = [executor.submit(self.fetch, url) for url in urls]
-
+            futures = {executor.submit(self.fetch, url): url for url in urls}
             for f in as_completed(futures):
                 url, data, status, headers = f.result()
                 results[url] = {
@@ -122,12 +155,11 @@ class CloudflareBypass:
                     "url": url,
                     "headers": headers,
                 }
-
         return results
 
 
 class CloudflareWorker(QThread):
-    """Worker thread for Cloudflare extraction (V1)"""
+    """Worker thread for Cloudflare extraction (V1)."""
 
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
@@ -135,112 +167,122 @@ class CloudflareWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
-    def __init__(self, links, threads=10, delay=0):
-        super().__init__()
+    def __init__(
+        self,
+        links: list[str],
+        threads: int = MAX_CF_THREADS,
+        delay: int = 0,
+        parent=None,
+    ):
+        super().__init__(parent)
         self.links = links
-        self.total_links = 0
+        self.total_links = len(links)
         self.threads = threads
         self.delay = delay
         self.cf_bypass = None
+
+    def _fmt(
+        self, tag: str, filename: str, part_num: str, idx: int, msg: str = ""
+    ) -> str:
+        base = f"{tag}: {filename}"
+        if msg:
+            base += f" - {msg}"
+        return f"{base} - (Part: {part_num}) - [{idx}/{self.total_links}]"
 
     def run(self):
         try:
             self.status_update.emit("Initializing Cloudflare bypass...")
             self.cf_bypass = CloudflareBypass(threads=self.threads)
-
-            self.status_update.emit(f"Processing {len(self.links)} links...")
-            self.total_links = len(self.links)
+            self.status_update.emit(f"Processing {self.total_links} links...")
 
             for i, link in enumerate(self.links, 1):
                 self.msleep(self.delay)
-                filename = link.split("/")[-1].split("#")[-1]
-                file_id = (re.search(r"fuckingfast\.co/([^#/?]+)", link)).group(1)
-                part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
-                part_num = part_match.group(1) if part_match else "0"
+                filename = _extract_filename(link)
+                file_id_m = RE_FILE_ID.search(link)
+                file_id = file_id_m.group(1) if file_id_m else None
+                part_num = _extract_part_num(filename)
+
+                if not file_id:
+                    self.link_found.emit(
+                        self._fmt("FAILED", filename, part_num, i, "No file ID")
+                    )
+                    self.progress_update.emit(i)
+                    continue
+
                 _, page_source, status_code, headers = self.cf_bypass.fetch(
                     f"https://fuckingfast.co/f/{file_id}/go", method="POST"
                 )
                 self.status_update.emit(
-                    f"[{i}/{len(self.links)}] Processing {filename} (Status: {status_code}) - (Part: {part_num}) - [{i}/{self.total_links}]"
+                    self._fmt(
+                        "Processing", filename, part_num, i, f"Status: {status_code}"
+                    )
                 )
 
                 if page_source and status_code == 429:
-                    retry_after = headers.get("Retry-After")
-                    if retry_after:
-                        try:
-                            retry_seconds = int(retry_after)
-                        except Exception:
-                            retry_seconds = 60
-                    else:
+                    retry_after = headers.get("Retry-After") if headers else None
+                    try:
+                        retry_seconds = int(retry_after) if retry_after else 60
+                    except ValueError, TypeError:
                         retry_seconds = 60
-
                     self.link_found.emit(
-                        f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds- (Part: {part_num})- [{i}/{self.total_links}]"
+                        f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds - (Part: {part_num}) - [{i}/{self.total_links}]"
                     )
                     self.status_update.emit(
-                        f"Rate Limited: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                        self._fmt("Rate Limited", filename, part_num, i)
                     )
 
                 elif page_source and status_code == 403:
-                    # Check if it's a Cloudflare challenge
+                    lower_src = page_source.lower()
                     if (
-                        "cf-challenge" in page_source.lower()
-                        or "cloudflare" in page_source.lower()
-                        or "just a moment" in page_source.lower()
+                        "cf-challenge" in lower_src
+                        or "cloudflare" in lower_src
+                        or "just a moment" in lower_src
                     ):
                         self.link_found.emit(
-                            f"CLOUDFLARE: {filename} - Protected, use V2 - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            self._fmt(
+                                "CLOUDFLARE", filename, part_num, i, "Protected, use V2"
+                            )
                         )
                         self.status_update.emit(
-                            f"Cloudflare detected: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            self._fmt("Cloudflare detected", filename, part_num, i)
                         )
+
                 elif page_source and status_code == 200:
-                    # Try to extract link from page source
-                    # extracted_url = self._extract_link_from_html(page_source, filename)
-                    extracted_url = headers.get("Hx-Redirect")
+                    extracted_url = headers.get("Hx-Redirect") if headers else None
                     if extracted_url:
                         self.link_found.emit(extracted_url + f"#{filename}")
                         self.status_update.emit(
-                            f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            self._fmt("Extracted", filename, part_num, i)
                         )
                     else:
                         self.link_found.emit(
-                            f"FAILED: {filename} - No direct link found - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            self._fmt(
+                                "FAILED", filename, part_num, i, "No direct link found"
+                            )
                         )
                         self.status_update.emit(
-                            f"Failed: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            self._fmt("Failed", filename, part_num, i)
                         )
                 else:
                     self.link_found.emit(
-                        f"FAILED: {filename} - Status {status_code} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                        self._fmt(
+                            "FAILED", filename, part_num, i, f"Status {status_code}"
+                        )
                     )
-                    self.status_update.emit(
-                        f"Failed: {filename} (Status: {status_code})- (Part: {part_num}) - [{i}/{self.total_links}]"
-                    )
+                    self.status_update.emit(self._fmt("Failed", filename, part_num, i))
+
                 self.progress_update.emit(i)
 
             self.status_update.emit("Extraction complete (V1)")
             self.extraction_complete.emit()
 
-        except Exception as e:
-            self.error_occurred.emit(
-                f"Cloudflare error: {str(e)}\n{traceback.format_exc()}"
-            )
-
-    def _extract_link_from_html(self, html, filename):
-        """Extract the direct link from HTML content"""
-        try:
-            pattern = r'https?://(?:[a-zA-Z0-9-]+\.)*fuckingfast\.co(?:/[^\s"\'<>]*)?'
-            match = re.search(pattern, html)
-            if match:
-                return match.group(1) if len(match.groups()) > 0 else match.group(0)
-            return None
-        except Exception:
-            return None
+        except Exception as exc:
+            logger.exception("CloudflareWorker error")
+            self.error_occurred.emit(f"Cloudflare error: {exc}")
 
 
 class ZendriverWorker(QThread):
-    """Worker thread for zendriver extraction (V2)"""
+    """Worker thread for zendriver extraction (V2)."""
 
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
@@ -248,11 +290,10 @@ class ZendriverWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
-    def __init__(self, links, delay=3):
-        super().__init__()
+    def __init__(self, links: list[str], delay: int = 3, parent=None):
+        super().__init__(parent)
         self.links = links
-        self.direct_links = []
-        self.total_links = 0
+        self.total_links = len(links)
         self.delay = delay
         self.browser = None
         self._shutdown_requested = False
@@ -260,14 +301,16 @@ class ZendriverWorker(QThread):
     def run(self):
         try:
             asyncio.run(self._async_run())
-        except Exception as e:
-            self.error_occurred.emit(f"Zendriver error: {type(e).__name__}: {e}")
+        except Exception as exc:
+            if not self._shutdown_requested:
+                logger.exception("ZendriverWorker error")
+                self.error_occurred.emit(f"Zendriver error: {exc}")
 
     async def _async_run(self):
+        import zendriver as zd
+
         try:
             self.status_update.emit("Initializing browser (V2)...")
-            self.total_links = len(self.links)
-
             self.browser = await zd.start(
                 headless=False,
                 browser_args=[
@@ -281,23 +324,25 @@ class ZendriverWorker(QThread):
                 ],
             )
 
-            self.status_update.emit(f"Processing {len(self.links)} links...")
+            self.status_update.emit(f"Processing {self.total_links} links...")
             tab = await self.browser.get("https://fuckingfast.co")
-
             await tab.wait_for_ready_state("complete")
 
             for i, link in enumerate(self.links, 1):
-                filename = link.split("/")[-1].split("#")[-1]
-                file_id = (re.search(r"fuckingfast\.co/([^#/?]+)", link)).group(1)
-                part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
-                part_num = part_match.group(1) if part_match else "0"
+                if self._shutdown_requested:
+                    break
+
+                filename = _extract_filename(link)
+                file_id_m = RE_FILE_ID.search(link)
+                file_id = file_id_m.group(1) if file_id_m else None
+                part_num = _extract_part_num(filename)
                 self.status_update.emit(
-                    f"[{i}/{len(self.links)}] Processing {filename} - (Part:: {part_num}) - [{i}/{self.total_links}]"
+                    f"[{i}/{self.total_links}] Processing {filename} - (Part: {part_num})"
                 )
 
                 try:
                     self.status_update.emit(
-                        f"Extracting from {filename}... - (Part:: {part_num}) - [{i}/{self.total_links}]"
+                        f"Extracting from {filename}... - (Part: {part_num}) - [{i}/{self.total_links}]"
                     )
                     if file_id:
                         headers = await tab.evaluate(
@@ -305,88 +350,71 @@ class ZendriverWorker(QThread):
                             await_promise=True,
                         )
                         extracted_url = headers["hx-redirect"]
-                        self.direct_links.append(extracted_url)
                         self.link_found.emit(extracted_url + f"#{filename}")
                         self.status_update.emit(
                             f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
                         )
-                    # elif "rate limited" in page_source.lower():
-                    #     self.link_found.emit(
-                    #         f"FAILED: {filename} - Rate limited - (Part:: {part_num})"
-                    #     )
-                    #     self.status_update.emit(
-                    #         f"Failed: {filename} - Rate limited - (Part:: {part_num})"
-                    #     )
                     else:
                         self.link_found.emit(
-                            f"FAILED: {filename} - No direct link found - (Part:: {part_num}) - [{i}/{self.total_links}]"
+                            f"FAILED: {filename} - No file ID - (Part: {part_num}) - [{i}/{self.total_links}]"
                         )
-                        self.status_update.emit(
-                            f"Failed: {filename} - (Part:: {part_num}) - [{i}/{self.total_links}]"
-                        )
-
-                except Exception as e:
-                    error_msg = str(e)
-                    self.link_found.emit(
-                        f"ERROR: {filename} - {error_msg} - (Part:: {part_num}) - [{i}/{self.total_links}]"
+                except Exception as exc:
+                    logger.debug(
+                        "Zendriver extraction failed for %s: %s", filename, exc
                     )
-                    self.status_update.emit(
-                        f"Error: {filename} - {error_msg} - (Part:: {part_num}) - [{i}/{self.total_links}]"
+                    self.link_found.emit(
+                        f"FAILED: {filename} - {exc} - (Part: {part_num}) - [{i}/{self.total_links}]"
                     )
 
                 self.progress_update.emit(i)
 
-                # Add delay between requests to avoid rate limiting
-                if i < len(self.links) and not self._shutdown_requested:
-                    delay_sec = self.delay / 1000
-                    self.status_update.emit(
-                        f"Waiting {delay_sec} seconds before next request... - [{i}/{self.total_links}]"
-                    )
-                    await asyncio.sleep(delay_sec)
+                if not self._shutdown_requested and i < self.total_links:
+                    await asyncio.sleep(self.delay)
 
             self.status_update.emit("Extraction complete (V2)")
             self.extraction_complete.emit()
 
-        except Exception as e:
-            error_msg = f"Browser error: {type(e).__name__}: {e}"
-            self.error_occurred.emit(error_msg)
+        except Exception as exc:
+            if not self._shutdown_requested:
+                logger.exception("ZendriverWorker async error")
+                self.error_occurred.emit(f"Zendriver error: {exc}")
         finally:
             if self.browser:
                 try:
-                    self.status_update.emit(
-                        f"Closing browser... ({len(self.direct_links)} links)"
-                    )
-                    self.direct_links.clear()
+                    await self.browser.stop()
+                except Exception:
+                    logger.debug("Error stopping browser", exc_info=True)
                     await self.browser.stop()
                 except Exception:
                     pass
 
 
 class FetchWorker(QThread):
-    """Worker for fetching links from FitGirl page"""
+    """Worker for fetching links from FitGirl page."""
 
     status_update = pyqtSignal(str)
     fetch_complete = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
+    size_info = pyqtSignal(str)
 
-    def __init__(self, url):
-        super().__init__()
+    def __init__(self, url: str, parent=None):
+        super().__init__(parent)
         self.url = url
 
     def run(self):
         try:
+            import re as _re
+            import cloudscraper
+            from bs4 import BeautifulSoup
+
             self.status_update.emit("Fetching links from FitGirl...")
 
-            # Use cloudscraper for initial fetch to bypass Cloudflare
             scraper = cloudscraper.create_scraper(
                 browser={"browser": "chrome", "platform": "windows", "mobile": False}
             )
+            scraper.headers.update({"User-Agent": DEFAULT_USER_AGENT})
 
-            html = scraper.get(
-                self.url,
-                timeout=30,
-            ).text
-
+            html = scraper.get(self.url, timeout=CF_TIMEOUT).text
             soup = BeautifulSoup(html, "html.parser")
 
             links = list(
@@ -397,10 +425,22 @@ class FetchWorker(QThread):
                 }
             )
 
+            # Extract size info
+            size_pattern = _re.compile(
+                r"(Original Size|Repack Size)\s*:\s*(from\s+)?([\d.]+(?:\s*/\s*[\d.]+)?\s*\w+)",
+                _re.IGNORECASE,
+            )
+            sizes = []
+            for label, prefix, value in size_pattern.findall(html):
+                sizes.append(f"{label}: {prefix or ''}{value}")
+            if sizes:
+                self.size_info.emit(" | ".join(sizes))
+
             self.fetch_complete.emit(links)
 
-        except Exception as e:
-            self.error_occurred.emit(f"Fetch error: {str(e)}\n{traceback.format_exc()}")
+        except Exception as exc:
+            logger.exception("FetchWorker error")
+            self.error_occurred.emit(f"Fetch error: {exc}")
 
 
 class ClickableCheckBox(QCheckBox):
@@ -417,7 +457,7 @@ class ClickableCheckBox(QCheckBox):
 
 
 class ModernStyle:
-    """Modern dark theme with compact design"""
+    """Modern dark theme constants and centralized stylesheet helpers."""
 
     # Colors
     BG_PRIMARY = "#0d1117"
@@ -449,9 +489,86 @@ class ModernStyle:
     FONT_SIZE = 12
     FONT_SMALL = 11
 
+    # --- Centralized stylesheet helpers ---
+
+    @classmethod
+    def button_style(cls) -> str:
+        return f"""
+            QPushButton {{
+                background-color: {cls.BG_TERTIARY};
+                color: {cls.TEXT_PRIMARY};
+                border: 1px solid {cls.BORDER};
+                border-radius: {cls.RADIUS}px;
+                padding: 6px 16px;
+                min-width: 60px;
+            }}
+            QPushButton:hover {{
+                background-color: {cls.BG_HOVER};
+                border-color: {cls.BORDER_ACTIVE};
+            }}
+            QPushButton:pressed {{
+                background-color: {cls.BG_ACTIVE};
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }}
+        """
+
+    @classmethod
+    def card_button_style(cls) -> str:
+        return f"""
+            QPushButton {{
+                background-color: {cls.BG_TERTIARY};
+                color: {cls.TEXT_PRIMARY};
+                border: 1px solid {cls.BORDER};
+                border-radius: 6px;
+                padding: 5px 16px;
+                font-size: 11px;
+                font-weight: 500;
+                min-width: 60px;
+            }}
+            QPushButton:hover {{
+                background-color: {cls.BG_HOVER};
+                border-color: {cls.BORDER_ACTIVE};
+                color: white;
+            }}
+            QPushButton:pressed {{
+                background-color: {cls.BG_ACTIVE};
+                padding-top: 6px;
+                padding-bottom: 4px;
+            }}
+        """
+
+    @classmethod
+    def dialog_style(cls) -> str:
+        return f"""
+            QDialog {{
+                background-color: {cls.BG_PRIMARY};
+                color: {cls.TEXT_PRIMARY};
+            }}
+            QLabel {{ color: {cls.TEXT_PRIMARY}; }}
+        """
+
+    @classmethod
+    def details_label_style(cls) -> str:
+        return (
+            f"color: {cls.TEXT_SECONDARY}; "
+            f"background-color: {cls.BG_SECONDARY}; "
+            f"border: 1px solid {cls.BORDER}; "
+            f"border-radius: {cls.RADIUS}px; "
+            f"padding: 8px;"
+        )
+
+    @classmethod
+    def header_label_style(cls) -> str:
+        return f"font-weight: 600; color: {cls.TEXT_SECONDARY}; font-size: 11px;"
+
+    @classmethod
+    def muted_label_style(cls) -> str:
+        return f"color: {cls.TEXT_MUTED}; font-size: 11px;"
+
 
 class ModernGroupBox(QGroupBox):
-    def __init__(self, title, parent=None):
+    def __init__(self, title: str, parent=None):
         super().__init__(title, parent)
         self.setStyleSheet(f"""
             QGroupBox {{
@@ -473,30 +590,27 @@ class ModernGroupBox(QGroupBox):
 
 
 class CheckUpdateWorker(QThread):
-    """Background worker to check GitHub for latest release.
-
-    Uses urllib.request directly with a short timeout for fast, lightweight checks.
-    Emits signals for update found, no update, and errors — all safe to connect
-    to UI slots since cross-thread signal delivery is queued by Qt.
-    """
+    """Background worker to check GitHub for latest release."""
 
     update_found = pyqtSignal(str, str, str, str, str)
     update_error = pyqtSignal(str)
     no_update = pyqtSignal(str, str, str, str)
 
-    NETWORK_TIMEOUT = 8  # seconds
+    NETWORK_TIMEOUT = 8
 
-    def __init__(self, owner, repo, current_version, parent=None):
+    def __init__(self, owner: str, repo: str, current_version: str, parent=None):
         super().__init__(parent)
         self.owner = owner
         self.repo = repo
         self.current_version = current_version
 
     def run(self):
+        import requests as _requests
+
         url = f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/latest"
 
         try:
-            resp = requests.get(
+            resp = _requests.get(
                 url,
                 headers={
                     "Accept": "application/vnd.github.v3+json",
@@ -504,14 +618,14 @@ class CheckUpdateWorker(QThread):
                 },
                 timeout=self.NETWORK_TIMEOUT,
             )
-        except requests.ConnectionError:
+        except _requests.ConnectionError:
             self.update_error.emit("Could not connect to GitHub. Check your internet.")
             return
-        except requests.Timeout:
+        except _requests.Timeout:
             self.update_error.emit("GitHub request timed out. Try again later.")
             return
-        except requests.RequestException as e:
-            self.update_error.emit(f"Update check failed: {e}")
+        except _requests.RequestException as exc:
+            self.update_error.emit(f"Update check failed: {exc}")
             return
 
         if resp.status_code == 404:
@@ -528,8 +642,8 @@ class CheckUpdateWorker(QThread):
 
         try:
             data = resp.json()
-        except (ValueError, KeyError) as e:
-            self.update_error.emit(f"Invalid response from GitHub: {e}")
+        except (ValueError, KeyError) as exc:
+            self.update_error.emit(f"Invalid response from GitHub: {exc}")
             return
 
         tag = data.get("tag_name", "").lstrip("v")
@@ -550,15 +664,15 @@ class CheckUpdateWorker(QThread):
             self.no_update.emit(tag, body, html_url, published_at)
 
     @staticmethod
-    def _version_gt(remote, local):
-        """Compare version strings like '1.2.3' > '1.1.1'"""
+    def _version_gt(remote: str, local: str) -> bool:
+        """Compare version strings like '1.2.3' > '1.1.1'."""
 
-        def parse(v):
+        def parse(v: str) -> tuple[int, ...]:
             return tuple(int(x) for x in v.split(".") if x.isdigit())
 
         try:
             return parse(remote) > parse(local)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return False
 
 
@@ -664,8 +778,12 @@ class FitGirlParser:
     """Parses the FitGirl search results page into FitGirlSearchResult objects."""
 
     @staticmethod
-    def parse_search_results(html: str) -> tuple[list[FitGirlSearchResult], FitGirlPagination]:
+    def parse_search_results(
+        html: str,
+    ) -> tuple[list[FitGirlSearchResult], FitGirlPagination]:
         """Parse search results HTML and return (results, pagination)."""
+        from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(html, "html.parser")
         results: list[FitGirlSearchResult] = []
 
@@ -753,7 +871,7 @@ class FitGirlParser:
         if current_el:
             try:
                 pagination.current_page = int(current_el.get_text(strip=True))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         # Find all numbered page links (not dots, not next/prev)
@@ -765,7 +883,7 @@ class FitGirlParser:
                 num = int(text)
                 if num > max_page:
                     max_page = num
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
         pagination.total_pages = max_page
 
@@ -784,15 +902,12 @@ class FitGirlParser:
 class FitGirlSearchWorker(QThread):
     """Background worker that searches FitGirl Repacks."""
 
-    results_ready = pyqtSignal(list, object)  # list[FitGirlSearchResult], FitGirlPagination
+    results_ready = pyqtSignal(
+        list, object
+    )  # list[FitGirlSearchResult], FitGirlPagination
     search_error = pyqtSignal(str)
 
     SEARCH_URL = "https://fitgirl-repacks.site/"
-    USER_AGENT = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
-    TIMEOUT = 10  # seconds
 
     def __init__(self, query: str, page: int = 1, parent=None):
         super().__init__(parent)
@@ -800,18 +915,21 @@ class FitGirlSearchWorker(QThread):
         self.page = page
 
     def run(self):
+        import requests as _requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+
+        session = None
         try:
-            session = requests.Session()
+            session = _requests.Session()
             session.headers.update(
                 {
-                    "User-Agent": self.USER_AGENT,
+                    "User-Agent": DEFAULT_USER_AGENT,
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Encoding": "gzip, deflate",
                     "Accept-Language": "en-US,en;q=0.9",
                 }
             )
-
-            # Apply retry strategy
             retry = Retry(
                 total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504]
             )
@@ -820,31 +938,32 @@ class FitGirlSearchWorker(QThread):
             session.mount("http://", adapter)
 
             params = {"s": self.query}
-            if self.page > 1:
-                url = f"{self.SEARCH_URL}page/{self.page}/"
-            else:
-                url = self.SEARCH_URL
-
-            resp = session.get(
-                url,
-                params=params,
-                timeout=self.TIMEOUT,
+            url = (
+                f"{self.SEARCH_URL}page/{self.page}/"
+                if self.page > 1
+                else self.SEARCH_URL
             )
+
+            resp = session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
 
             results, pagination = FitGirlParser.parse_search_results(resp.text)
             self.results_ready.emit(results, pagination)
 
-        except requests.ConnectionError:
+        except _requests.ConnectionError:
             self.search_error.emit("No internet connection. Please check your network.")
-        except requests.Timeout:
+        except _requests.Timeout:
             self.search_error.emit(
                 "Request timed out. The server may be slow or offline."
             )
-        except requests.HTTPError as e:
-            self.search_error.emit(f"HTTP error: {e.response.status_code}")
-        except Exception as e:
-            self.search_error.emit(f"Search failed: {e}")
+        except _requests.HTTPError as exc:
+            self.search_error.emit(f"HTTP error: {exc.response.status_code}")
+        except Exception as exc:
+            logger.exception("FitGirlSearchWorker error")
+            self.search_error.emit(f"Search failed: {exc}")
+        finally:
+            if session:
+                session.close()
 
 
 class FitGirlExplorerWidget(QWidget):
@@ -981,6 +1100,7 @@ class FitGirlExplorerWidget(QWidget):
             }}
         """)
         self._page_input.returnPressed.connect(self._on_page_submit)
+        self._page_input.installEventFilter(self)
         pag_layout.addWidget(self._page_input)
 
         self._next_btn = QPushButton("Next →")
@@ -1039,13 +1159,19 @@ class FitGirlExplorerWidget(QWidget):
         self._update_pagination_ui()
         self._search_worker = None
 
-    def _on_results(self, results: list[FitGirlSearchResult], pagination: FitGirlPagination):
+    def _on_results(
+        self, results: list[FitGirlSearchResult], pagination: FitGirlPagination
+    ):
         self._pagination = pagination
         if not results:
             self.status_label.setText("No results found.")
             return
 
-        page_info = f" (page {pagination.current_page}/{pagination.total_pages})" if pagination.total_pages > 1 else ""
+        page_info = (
+            f" (page {pagination.current_page}/{pagination.total_pages})"
+            if pagination.total_pages > 1
+            else ""
+        )
         self.status_label.setText(f"Found {len(results)} result(s){page_info}")
         for result in results:
             card = self._create_result_card(result)
@@ -1053,6 +1179,14 @@ class FitGirlExplorerWidget(QWidget):
 
     def _on_error(self, message: str):
         self.status_label.setText(f"Error: {message}")
+
+    def eventFilter(self, obj, event):
+        if obj is self._page_input:
+            if event.type() == event.Type.FocusIn:
+                self._page_input.clear()
+            elif event.type() == event.Type.FocusOut:
+                self._on_page_submit()
+        return super().eventFilter(obj, event)
 
     def _update_pagination_ui(self):
         pag = self._pagination
@@ -1067,16 +1201,18 @@ class FitGirlExplorerWidget(QWidget):
 
     def _on_page_submit(self):
         text = self._page_input.text().strip()
-        # Extract number from "Page X of Y" or just a number
-        import re as _re
-        match = _re.search(r"(\d+)", text)
+        match = re.search(r"(\d+)", text)
         if not match:
-            self._page_input.setText(f"Page {self._pagination.current_page} of {self._pagination.total_pages}")
+            self._page_input.setText(
+                f"Page {self._pagination.current_page} of {self._pagination.total_pages}"
+            )
             return
 
         page = int(match.group(1))
         if page < 1 or page > self._pagination.total_pages:
-            self._page_input.setText(f"Page {self._pagination.current_page} of {self._pagination.total_pages}")
+            self._page_input.setText(
+                f"Page {self._pagination.current_page} of {self._pagination.total_pages}"
+            )
             return
 
         if page != self._pagination.current_page:
@@ -1344,10 +1480,10 @@ class FitFetchApp(QMainWindow):
         self.checkbox_links = {}
         self.checkbox_widgets = []
         self.links = []
-        self.direct_links = []
         self.current_file = None
         self.worker = None
         self.extract_worker = None
+        self._fetched_size = ""
 
         # Delay settings (defaults)
         self.v1_delay = 0  # milliseconds
@@ -1993,23 +2129,9 @@ class FitFetchApp(QMainWindow):
                 "Example: https://fitgirl-repacks.site/grand-theft-auto-v/",
             )
 
-    def _is_valid_fitgirl_url(self, url):
-        """Validate if the URL is a proper FitGirl repack URL"""
-        if not url:
-            return False
-
-        fitgirl_patterns = [
-            r"^https?://fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/?$",
-            r"^https?://www\.fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/?$",
-            r"^https?://fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_/]*$",
-            r"^https?://www\.fitgirl-repacks\.site/[a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_/]*$",
-        ]
-
-        for pattern in fitgirl_patterns:
-            if re.match(pattern, url, re.IGNORECASE):
-                return True
-
-        return False
+    def _is_valid_fitgirl_url(self, url: str) -> bool:
+        """Validate if the URL is a proper FitGirl repack URL."""
+        return bool(url and RE_FITGIRL_URL.match(url))
 
     def show_about(self):
         about_text = f"""
@@ -2139,192 +2261,92 @@ class FitFetchApp(QMainWindow):
         self._update_manager.check_for_updates(silent=False)
 
     def _on_update_found(self, tag, body, html_url, published_at, download_url):
-        date_str = ""
-        if published_at:
-            try:
-                dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-                date_str = dt.strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                date_str = published_at[:10]
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Update Available")
-        dlg.setFixedSize(520, 380)
-        dlg.setStyleSheet(f"""
-            QDialog {{
-                background-color: {ModernStyle.BG_PRIMARY};
-                color: {ModernStyle.TEXT_PRIMARY};
-            }}
-            QLabel {{
-                color: {ModernStyle.TEXT_PRIMARY};
-            }}
-        """)
-
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        title = QLabel(
-            f"<h3 style='color: {ModernStyle.ACCENT}; margin:0;'>Update Available: v{tag}</h3>"
+        self._show_version_dialog(
+            title=f"Update Available: v{tag}",
+            subtitle=f"Current version: <b>{VERSION}</b> &rarr; New version: <b>{tag}</b>",
+            body=body,
+            html_url=html_url,
+            published_at=published_at,
+            extra_buttons=[
+                (
+                    "Download",
+                    lambda: QDesktopServices.openUrl(
+                        QUrl(download_url if download_url else html_url)
+                    ),
+                )
+            ],
         )
-        title.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(title)
-
-        info = QLabel(
-            f"<p style='color: {ModernStyle.TEXT_SECONDARY};'>"
-            f"Current version: <b>{VERSION}</b> &rarr; New version: <b>{tag}</b></p>"
-        )
-        info.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(info)
-
-        if date_str:
-            date_label = QLabel(
-                f"<p style='color: {ModernStyle.TEXT_MUTED};'>Released: {date_str}</p>"
-            )
-            date_label.setTextFormat(Qt.TextFormat.RichText)
-            layout.addWidget(date_label)
-
-        btn_style = f"""
-            QPushButton {{
-                background-color: {ModernStyle.BG_TERTIARY};
-                color: {ModernStyle.TEXT_PRIMARY};
-                border: 1px solid {ModernStyle.BORDER};
-                border-radius: {ModernStyle.RADIUS}px;
-                padding: 6px 16px;
-                min-width: 60px;
-            }}
-            QPushButton:hover {{
-                background-color: {ModernStyle.BG_HOVER};
-                border-color: {ModernStyle.BORDER_ACTIVE};
-            }}
-            QPushButton:pressed {{
-                background-color: {ModernStyle.BG_ACTIVE};
-                padding-top: 7px;
-                padding-bottom: 5px;
-            }}
-        """
-
-        details_text = body if body else "No changelog available."
-        details_label = QLabel(details_text)
-        details_label.setWordWrap(True)
-        details_label.setStyleSheet(
-            f"color: {ModernStyle.TEXT_SECONDARY}; background-color: {ModernStyle.BG_SECONDARY}; border: 1px solid {ModernStyle.BORDER}; border-radius: {ModernStyle.RADIUS}px; padding: 8px;"
-        )
-        layout.addWidget(details_label)
-
-        layout.addStretch()
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-
-        ok_btn = QPushButton("OK")
-        ok_btn.setStyleSheet(btn_style)
-        ok_btn.clicked.connect(dlg.accept)
-        btn_layout.addWidget(ok_btn)
-
-        view_btn = QPushButton("View Page")
-        view_btn.setStyleSheet(btn_style)
-        view_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(html_url)))
-        btn_layout.addWidget(view_btn)
-
-        download_btn = QPushButton("Download")
-        download_btn.setStyleSheet(btn_style)
-
-        def open_download():
-            if download_url:
-                QDesktopServices.openUrl(QUrl(download_url))
-            else:
-                QDesktopServices.openUrl(QUrl(html_url))
-
-        download_btn.clicked.connect(open_download)
-        btn_layout.addWidget(download_btn)
-
-        layout.addLayout(btn_layout)
-
-        dlg.setMinimumSize(520, 300)
-        dlg.resize(520, 380)
-        dlg.exec()
 
     def _on_update_error(self, message):
         QMessageBox.warning(self, "Update Check Failed", message)
 
     def _on_no_update(self, tag, body, html_url, published_at):
+        self._show_version_dialog(
+            title=f"Up to Date: v{VERSION}",
+            subtitle=f"Current version: <b>{VERSION}</b> &rarr; Latest: <b>{tag}</b>",
+            body=body,
+            html_url=html_url,
+            published_at=published_at,
+            extra_buttons=[],
+        )
+
+    def _show_version_dialog(
+        self,
+        title: str,
+        subtitle: str,
+        body: str,
+        html_url: str,
+        published_at: str | None,
+        extra_buttons: list | None,
+    ):
         date_str = ""
         if published_at:
             try:
                 dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
                 date_str = dt.strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                date_str = published_at[:10]
+            except ValueError, TypeError:
+                date_str = (
+                    published_at[:10] if len(published_at) >= 10 else published_at
+                )
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Version Info")
-        dlg.setStyleSheet(f"""
-            QDialog {{
-                background-color: {ModernStyle.BG_PRIMARY};
-                color: {ModernStyle.TEXT_PRIMARY};
-            }}
-            QLabel {{
-                color: {ModernStyle.TEXT_PRIMARY};
-            }}
-        """)
+        dlg.setWindowTitle("Update Available" if extra_buttons else "Version Info")
+        dlg.setStyleSheet(ModernStyle.dialog_style())
 
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel(
-            f"<h3 style='color: {ModernStyle.ACCENT}; margin:0;'>Up to Date: v{VERSION}</h3>"
+        title_lbl = QLabel(
+            f"<h3 style='color: {ModernStyle.ACCENT}; margin:0;'>{title}</h3>"
         )
-        title.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(title)
+        title_lbl.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(title_lbl)
 
-        info = QLabel(
-            f"<p style='color: {ModernStyle.TEXT_SECONDARY};'>"
-            f"Current version: <b>{VERSION}</b> &rarr; Latest: <b>{tag}</b></p>"
+        info_lbl = QLabel(
+            f"<p style='color: {ModernStyle.TEXT_SECONDARY};'>{subtitle}</p>"
         )
-        info.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(info)
+        info_lbl.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(info_lbl)
 
         if date_str:
-            date_label = QLabel(
+            date_lbl = QLabel(
                 f"<p style='color: {ModernStyle.TEXT_MUTED};'>Released: {date_str}</p>"
             )
-            date_label.setTextFormat(Qt.TextFormat.RichText)
-            layout.addWidget(date_label)
+            date_lbl.setTextFormat(Qt.TextFormat.RichText)
+            layout.addWidget(date_lbl)
 
-        btn_style = f"""
-            QPushButton {{
-                background-color: {ModernStyle.BG_TERTIARY};
-                color: {ModernStyle.TEXT_PRIMARY};
-                border: 1px solid {ModernStyle.BORDER};
-                border-radius: {ModernStyle.RADIUS}px;
-                padding: 6px 16px;
-                min-width: 60px;
-            }}
-            QPushButton:hover {{
-                background-color: {ModernStyle.BG_HOVER};
-                border-color: {ModernStyle.BORDER_ACTIVE};
-            }}
-            QPushButton:pressed {{
-                background-color: {ModernStyle.BG_ACTIVE};
-                padding-top: 7px;
-                padding-bottom: 5px;
-            }}
-        """
-
-        details_text = body if body else "No changelog available."
-        details_label = QLabel(details_text)
-        details_label.setWordWrap(True)
-        details_label.setStyleSheet(
-            f"color: {ModernStyle.TEXT_SECONDARY}; background-color: {ModernStyle.BG_SECONDARY}; border: 1px solid {ModernStyle.BORDER}; border-radius: {ModernStyle.RADIUS}px; padding: 8px;"
-        )
-        layout.addWidget(details_label)
+        details_lbl = QLabel(body if body else "No changelog available.")
+        details_lbl.setWordWrap(True)
+        details_lbl.setStyleSheet(ModernStyle.details_label_style())
+        layout.addWidget(details_lbl)
 
         layout.addStretch()
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
+
+        btn_style = ModernStyle.button_style()
 
         ok_btn = QPushButton("OK")
         ok_btn.setStyleSheet(btn_style)
@@ -2335,6 +2357,12 @@ class FitFetchApp(QMainWindow):
         view_btn.setStyleSheet(btn_style)
         view_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(html_url)))
         btn_layout.addWidget(view_btn)
+
+        for label, callback in extra_buttons or []:
+            btn = QPushButton(label)
+            btn.setStyleSheet(btn_style)
+            btn.clicked.connect(callback)
+            btn_layout.addWidget(btn)
 
         layout.addLayout(btn_layout)
 
@@ -2364,8 +2392,6 @@ class FitFetchApp(QMainWindow):
         cursor = self.output_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.output_text.setTextCursor(cursor)
-        if text.startswith("http"):
-            self.direct_links.append(text)
         self.update_link_count()
 
     def clear_checkboxes(self):
@@ -2376,10 +2402,9 @@ class FitFetchApp(QMainWindow):
         self.checkboxes.clear()
         self.checkbox_links.clear()
         self.checkbox_widgets.clear()
-        self.direct_links.clear()
         self.parts_count.setText("0 found")
 
-    def populate_checkboxes(self, links):
+    def populate_checkboxes(self, links: list[str]):
         self.clear_checkboxes()
         self.links = links
 
@@ -2387,25 +2412,19 @@ class FitFetchApp(QMainWindow):
             self.update_status("No links found")
             return
 
-        # Sort links naturally by part number
-        def extract_number(url):
+        def extract_number(url: str) -> int:
             try:
-                filename = url.split("/")[-1]
-                match = re.search(r"part(\d+)", filename, re.IGNORECASE)
-                if match:
-                    return int(match.group(1))
-                return 0
-            except Exception:
+                m = RE_PART_NUM.search(_extract_filename(url))
+                return int(m.group(1)) if m else 0
+            except ValueError, TypeError:
                 return 0
 
         sorted_links = sorted(links, key=extract_number)
 
-        for idx, link in enumerate(sorted_links, 1):
-            filename = link.split("/")[-1].split("#")[-1]
-            part_match = re.search(r"part(\d+)", filename, re.IGNORECASE)
-            part_num = part_match.group(1) if part_match else "0"
+        for link in sorted_links:
+            filename = _extract_filename(link)
+            part_num = _extract_part_num(filename)
 
-            # Container for compact display
             container = QWidget()
             container.setStyleSheet(f"""
                 QWidget {{
@@ -2421,14 +2440,12 @@ class FitFetchApp(QMainWindow):
             container_layout.setContentsMargins(6, 3, 6, 3)
             container_layout.setSpacing(6)
 
-            # Checkbox with click support
             checkbox = ClickableCheckBox("")
             checkbox.stateChanged.connect(
                 lambda state, ref=link: self.on_checkbox_changed(ref, state)
             )
             self.checkbox_links[checkbox] = link
 
-            # Part number badge
             part_label = QLabel(f"#{part_num}")
             part_label.setFixedWidth(40)
             part_label.setStyleSheet(f"""
@@ -2442,7 +2459,6 @@ class FitFetchApp(QMainWindow):
                 }}
             """)
 
-            # Filename - click to toggle checkbox
             name_label = QLabel(filename)
             name_label.setStyleSheet(f"""
                 QLabel {{
@@ -2452,11 +2468,7 @@ class FitFetchApp(QMainWindow):
                 }}
             """)
             name_label.setCursor(Qt.CursorShape.PointingHandCursor)
-
-            def toggle_checkbox(event, cb=checkbox):
-                cb.toggle()
-
-            name_label.mousePressEvent = toggle_checkbox
+            name_label.mousePressEvent = lambda _, cb=checkbox: cb.toggle()
 
             container_layout.addWidget(checkbox)
             container_layout.addWidget(part_label)
@@ -2469,7 +2481,10 @@ class FitFetchApp(QMainWindow):
 
             checkbox.setChecked(True)
 
-        self.update_status(f"Found {len(links)} parts")
+        status = f"Found {len(links)} parts"
+        if self._fetched_size:
+            status += f" ({self._fetched_size})"
+        self.update_status(status)
         self.parts_count.setText(f"{len(links)} found")
         self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
@@ -2495,6 +2510,9 @@ class FitFetchApp(QMainWindow):
         ]
 
     def start_fetch(self):
+        if self.worker and self.worker.isRunning():
+            return
+
         url = self.url_input.text().strip()
         if not url:
             QMessageBox.critical(self, "Error", "Please enter a valid URL")
@@ -2508,11 +2526,15 @@ class FitFetchApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.link_count.setText("0 extracted")
 
-        self.worker = FetchWorker(url)
+        self.worker = FetchWorker(url, parent=self)
         self.worker.status_update.connect(self.update_status)
         self.worker.fetch_complete.connect(self.on_fetch_complete)
         self.worker.error_occurred.connect(self.on_error)
+        self.worker.size_info.connect(self._on_size_info)
         self.worker.start()
+
+    def _on_size_info(self, size_text: str):
+        self._fetched_size = size_text
 
     def on_fetch_complete(self, links):
         self.populate_checkboxes(links)
@@ -2523,7 +2545,10 @@ class FitFetchApp(QMainWindow):
         self.fetch_btn.setEnabled(True)
         QMessageBox.critical(self, "Error", f"An error occurred:\n{error_msg}")
 
-    def start_extraction(self, method="v1"):
+    def start_extraction(self, method: str = "v1"):
+        if self.extract_worker and self.extract_worker.isRunning():
+            return
+
         selected = self.get_selected_links()
         if not selected:
             QMessageBox.warning(self, "Warning", "No items selected")
@@ -2540,11 +2565,13 @@ class FitFetchApp(QMainWindow):
 
         if method == "v1":
             self.extract_worker = CloudflareWorker(
-                selected, threads=10, delay=self.v1_delay
+                selected, threads=MAX_CF_THREADS, delay=self.v1_delay, parent=self
             )
             self.update_status("Starting V1 extraction (Cloudflare bypass)...")
         else:
-            self.extract_worker = ZendriverWorker(selected, delay=self.v2_delay)
+            self.extract_worker = ZendriverWorker(
+                selected, delay=self.v2_delay, parent=self
+            )
             self.update_status("Starting V2 extraction (Browser)...")
 
         self.extract_worker.status_update.connect(self.update_status)
@@ -2565,9 +2592,9 @@ class FitFetchApp(QMainWindow):
         self.fetch_btn.setEnabled(True)
         self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
-        self.update_status(f"Extraction complete ({len(self.direct_links)} links)")
-        self.direct_links.clear()
         self.update_link_count()
+        count = self.link_count.text()
+        self.update_status(f"Extraction complete ({count})")
 
     def save_links(self):
         text = self.output_text.toPlainText().strip()
@@ -2614,7 +2641,7 @@ class FitFetchApp(QMainWindow):
         """Trigger a silent background update check after the window is fully visible."""
         super().showEvent(event)
         # Delay slightly so the UI is fully rendered before starting the network call
-        QTimer.singleShot(1500, self._startup_update_check)
+        QTimer.singleShot(STARTUP_UPDATE_DELAY_MS, self._startup_update_check)
 
     def _startup_update_check(self):
         """Run the silent update check on startup (once per launch)."""
@@ -2624,11 +2651,7 @@ class FitFetchApp(QMainWindow):
         self._update_manager.check_for_updates(silent=True)
 
     def closeEvent(self, event):
-        if (
-            hasattr(self, "extract_worker")
-            and self.extract_worker
-            and self.extract_worker.isRunning()
-        ):
+        if self.extract_worker and self.extract_worker.isRunning():
             reply = QMessageBox.question(
                 self,
                 "Confirm Exit",
@@ -2643,21 +2666,18 @@ class FitFetchApp(QMainWindow):
         # Stop the update check worker if still running
         if self._update_manager._worker and self._update_manager._worker.isRunning():
             self._update_manager._worker.quit()
-            self._update_manager._worker.wait(3000)
+            self._update_manager._worker.wait(CLOSE_WAIT_MS)
 
-        if hasattr(self, "worker") and self.worker and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait()
-        if (
-            hasattr(self, "extract_worker")
-            and self.extract_worker
-            and self.extract_worker.isRunning()
-        ):
+        # Stop fetch worker cooperatively
+        if self.worker and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait(CLOSE_WAIT_MS)
+
+        # Stop extraction worker cooperatively
+        if self.extract_worker and self.extract_worker.isRunning():
             self.extract_worker._shutdown_requested = True
+            self.extract_worker.quit()
             self.extract_worker.wait(5000)
-            if self.extract_worker.isRunning():
-                self.extract_worker.terminate()
-                self.extract_worker.wait()
 
         event.accept()
 

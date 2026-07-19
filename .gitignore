@@ -8,9 +8,3 @@ wheels/
 
 # Virtual environments
 .venv
-
-# Others
-main.spec
-upx.exe
-main.dist
-FitFetch.exe
