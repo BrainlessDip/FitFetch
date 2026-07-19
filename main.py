@@ -11,6 +11,7 @@ import re
 import os
 import asyncio
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -44,9 +45,10 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QFormLayout,
     QDialogButtonBox,
+    QStackedWidget,
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QUrl, QTimer
-from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices
+from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices, QPixmap
 import traceback
 
 # APP DETAILS
@@ -133,7 +135,7 @@ class CloudflareWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
-    def __init__(self, links, threads=10, delay=1000):
+    def __init__(self, links, threads=10, delay=0):
         super().__init__()
         self.links = links
         self.total_links = 0
@@ -431,9 +433,9 @@ class ModernStyle:
     BORDER = "#30363d"
     BORDER_ACTIVE = "#58a6ff"
 
-    ACCENT = "#58a6ff"
-    ACCENT_HOVER = "#79c0ff"
-    ACCENT_PRESSED = "#1f6feb"
+    ACCENT = "#3B82F6"
+    ACCENT_HOVER = "#2563EB"
+    ACCENT_PRESSED = "#1D4ED8"
 
     SUCCESS = "#3fb950"
     WARNING = "#d29922"
@@ -556,7 +558,7 @@ class CheckUpdateWorker(QThread):
 
         try:
             return parse(remote) > parse(local)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return False
 
 
@@ -635,6 +637,628 @@ class UpdateManager(QObject):
     no_update_found = pyqtSignal(str, str, str, str)
 
 
+@dataclass
+class FitGirlSearchResult:
+    """Represents a single search result from FitGirl Repacks."""
+
+    title: str
+    url: str
+    date: str
+    category: str
+    summary: str
+    comments: str | None = None
+    tags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FitGirlPagination:
+    """Pagination info from a FitGirl search results page."""
+
+    current_page: int = 1
+    total_pages: int = 1
+    next_url: str | None = None
+    prev_url: str | None = None
+
+
+class FitGirlParser:
+    """Parses the FitGirl search results page into FitGirlSearchResult objects."""
+
+    @staticmethod
+    def parse_search_results(html: str) -> tuple[list[FitGirlSearchResult], FitGirlPagination]:
+        """Parse search results HTML and return (results, pagination)."""
+        soup = BeautifulSoup(html, "html.parser")
+        results: list[FitGirlSearchResult] = []
+
+        for article in soup.find_all("article"):
+            try:
+                result = FitGirlParser._parse_article(article)
+                if result:
+                    results.append(result)
+            except Exception:
+                # Skip malformed articles silently
+                continue
+
+        pagination = FitGirlParser._parse_pagination(soup)
+        return results, pagination
+
+    @staticmethod
+    def _parse_article(article) -> FitGirlSearchResult | None:
+        """Parse a single <article> element into a FitGirlSearchResult."""
+        # Title and URL
+        title_el = article.select_one(".entry-title a")
+        if not title_el:
+            return None
+
+        title = title_el.get_text(strip=True)
+        url = title_el.get("href", "")
+        if not url:
+            return None
+
+        # Published date
+        date = ""
+        time_el = article.select_one(".entry-date time")
+        if time_el:
+            date = time_el.get_text(strip=True)
+        elif article.select_one("time"):
+            date = article.select_one("time").get_text(strip=True)
+
+        # Category — may be multiple .cat-links spans with multiple <a> each
+        cats: list[str] = []
+        for cat_span in article.select(".cat-links"):
+            for a in cat_span.select("a"):
+                text = a.get_text(strip=True)
+                if text:
+                    cats.append(text)
+        category = ", ".join(dict.fromkeys(cats))  # dedupe, preserve order
+
+        # Summary — plain text only
+        summary = ""
+        summary_el = article.select_one(".entry-summary")
+        if summary_el:
+            summary = summary_el.get_text(strip=True)
+
+        # Comment count (optional)
+        comments = None
+        comment_el = article.select_one(".comments-link a, .comment-count")
+        if comment_el:
+            comments = comment_el.get_text(strip=True)
+
+        # Tags (optional)
+        tags: list[str] = []
+        tag_links = article.select(".tags-links a, .tag-links a")
+        for tag_el in tag_links:
+            tag_text = tag_el.get_text(strip=True)
+            if tag_text:
+                tags.append(tag_text)
+
+        return FitGirlSearchResult(
+            title=title,
+            url=url,
+            date=date,
+            category=category,
+            summary=summary,
+            comments=comments,
+            tags=tags,
+        )
+
+    @staticmethod
+    def _parse_pagination(soup) -> FitGirlPagination:
+        """Parse the pagination div and extract page info."""
+        pagination = FitGirlPagination()
+        nav = soup.select_one("div.pagination.loop-pagination")
+        if not nav:
+            return pagination
+
+        current_el = nav.select_one("span.page-numbers.current")
+        if current_el:
+            try:
+                pagination.current_page = int(current_el.get_text(strip=True))
+            except (ValueError, TypeError):
+                pass
+
+        # Find all numbered page links (not dots, not next/prev)
+        page_links = nav.select("a.page-numbers:not(.next):not(.prev)")
+        max_page = pagination.current_page
+        for link in page_links:
+            text = link.get_text(strip=True)
+            try:
+                num = int(text)
+                if num > max_page:
+                    max_page = num
+            except (ValueError, TypeError):
+                pass
+        pagination.total_pages = max_page
+
+        next_el = nav.select_one("a.next.page-numbers")
+        if next_el:
+            pagination.next_url = next_el.get("href", "")
+
+        # Previous page
+        prev_el = nav.select_one("a.prev.page-numbers")
+        if prev_el:
+            pagination.prev_url = prev_el.get("href", "")
+
+        return pagination
+
+
+class FitGirlSearchWorker(QThread):
+    """Background worker that searches FitGirl Repacks."""
+
+    results_ready = pyqtSignal(list, object)  # list[FitGirlSearchResult], FitGirlPagination
+    search_error = pyqtSignal(str)
+
+    SEARCH_URL = "https://fitgirl-repacks.site/"
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+    TIMEOUT = 10  # seconds
+
+    def __init__(self, query: str, page: int = 1, parent=None):
+        super().__init__(parent)
+        self.query = query
+        self.page = page
+
+    def run(self):
+        try:
+            session = requests.Session()
+            session.headers.update(
+                {
+                    "User-Agent": self.USER_AGENT,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Accept-Language": "en-US,en;q=0.9",
+                }
+            )
+
+            # Apply retry strategy
+            retry = Retry(
+                total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504]
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+
+            params = {"s": self.query}
+            if self.page > 1:
+                url = f"{self.SEARCH_URL}page/{self.page}/"
+            else:
+                url = self.SEARCH_URL
+
+            resp = session.get(
+                url,
+                params=params,
+                timeout=self.TIMEOUT,
+            )
+            resp.raise_for_status()
+
+            results, pagination = FitGirlParser.parse_search_results(resp.text)
+            self.results_ready.emit(results, pagination)
+
+        except requests.ConnectionError:
+            self.search_error.emit("No internet connection. Please check your network.")
+        except requests.Timeout:
+            self.search_error.emit(
+                "Request timed out. The server may be slow or offline."
+            )
+        except requests.HTTPError as e:
+            self.search_error.emit(f"HTTP error: {e.response.status_code}")
+        except Exception as e:
+            self.search_error.emit(f"Search failed: {e}")
+
+
+class FitGirlExplorerWidget(QWidget):
+    """Built-in FitGirl Repacks search explorer.
+
+    Provides a search bar, scrollable result cards, and a preview dialog.
+    Emits a signal when the user wants to send a URL to the main extractor.
+    """
+
+    # Signal: emit the FitGirl page URL when user clicks "Extract"
+    send_to_extractor = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._search_worker = None
+        self._current_query = ""
+        self._current_page = 1
+        self._pagination = FitGirlPagination()
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # --- Search bar ---
+        search_group = ModernGroupBox("Search FitGirl Repacks")
+        search_layout = QHBoxLayout(search_group)
+        search_layout.setSpacing(8)
+        search_layout.setContentsMargins(10, 8, 10, 10)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(
+            "Search for games... (e.g. GTA, Cyberpunk, Elden Ring)"
+        )
+        self.search_input.returnPressed.connect(self._on_search)
+        search_layout.addWidget(self.search_input)
+
+        self.search_btn = QPushButton("Search")
+        self.search_btn.setFixedWidth(90)
+        self.search_btn.setFixedHeight(32)
+        self.search_btn.clicked.connect(self._on_search)
+        search_layout.addWidget(self.search_btn)
+
+        layout.addWidget(search_group)
+
+        # --- Status ---
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(
+            f"color: {ModernStyle.TEXT_SECONDARY}; font-size: 11px; padding: 2px 4px;"
+        )
+        layout.addWidget(self.status_label)
+
+        # --- Results scroll area ---
+        self.results_scroll = QScrollArea()
+        self.results_scroll.setWidgetResizable(True)
+        self.results_scroll.setStyleSheet(
+            "QScrollArea { border: none; background-color: transparent; }"
+        )
+
+        self.results_container = QWidget()
+        self.results_container.setStyleSheet(
+            f"background-color: {ModernStyle.BG_PRIMARY};"
+        )
+        self.results_layout = QVBoxLayout(self.results_container)
+        self.results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.results_layout.setSpacing(8)
+        self.results_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.results_scroll.setWidget(self.results_container)
+        layout.addWidget(self.results_scroll)
+
+        # --- Pagination bar ---
+        self._pagination_bar = QWidget()
+        self._pagination_bar.setStyleSheet(f"""
+            QWidget {{
+                background-color: {ModernStyle.BG_SECONDARY};
+                border: 1px solid {ModernStyle.BORDER};
+                border-radius: {ModernStyle.RADIUS}px;
+            }}
+        """)
+        pag_layout = QHBoxLayout(self._pagination_bar)
+        pag_layout.setContentsMargins(12, 6, 12, 6)
+        pag_layout.setSpacing(8)
+
+        pag_btn_style = f"""
+            QPushButton {{
+                background-color: {ModernStyle.BG_TERTIARY};
+                color: {ModernStyle.TEXT_PRIMARY};
+                border: 1px solid {ModernStyle.BORDER};
+                border-radius: 6px;
+                padding: 4px 14px;
+                font-size: 11px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {ModernStyle.BG_HOVER};
+                border-color: {ModernStyle.BORDER_ACTIVE};
+            }}
+            QPushButton:pressed {{
+                background-color: {ModernStyle.BG_ACTIVE};
+                padding-top: 5px;
+                padding-bottom: 3px;
+            }}
+            QPushButton:disabled {{
+                color: {ModernStyle.TEXT_MUTED};
+                background-color: {ModernStyle.BG_SECONDARY};
+                border-color: {ModernStyle.BORDER};
+            }}
+        """
+
+        self._prev_btn = QPushButton("← Prev")
+        self._prev_btn.setStyleSheet(pag_btn_style)
+        self._prev_btn.setFixedHeight(28)
+        self._prev_btn.clicked.connect(self._on_prev_page)
+        pag_layout.addWidget(self._prev_btn)
+
+        self._page_input = QLineEdit()
+        self._page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._page_input.setFixedWidth(110)
+        self._page_input.setFixedHeight(28)
+        self._page_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {ModernStyle.BG_TERTIARY};
+                color: {ModernStyle.TEXT_PRIMARY};
+                border: 1px solid {ModernStyle.BORDER};
+                border-radius: 6px;
+                padding: 2px 6px;
+                font-size: 11px;
+                font-weight: 500;
+            }}
+            QLineEdit:focus {{
+                border-color: {ModernStyle.ACCENT};
+            }}
+        """)
+        self._page_input.returnPressed.connect(self._on_page_submit)
+        pag_layout.addWidget(self._page_input)
+
+        self._next_btn = QPushButton("Next →")
+        self._next_btn.setStyleSheet(pag_btn_style)
+        self._next_btn.setFixedHeight(28)
+        self._next_btn.clicked.connect(self._on_next_page)
+        pag_layout.addWidget(self._next_btn)
+
+        self._pagination_bar.setVisible(False)
+        layout.addWidget(self._pagination_bar)
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def _on_search(self):
+        query = self.search_input.text().strip()
+        if not query:
+            return
+
+        if self._search_worker and self._search_worker.isRunning():
+            return
+
+        self._current_query = query
+        self._current_page = 1
+        self._start_search(query, 1)
+
+    def _on_prev_page(self):
+        if self._current_page > 1 and self._current_query:
+            self._current_page -= 1
+            self._start_search(self._current_query, self._current_page)
+
+    def _on_next_page(self):
+        if self._current_page < self._pagination.total_pages and self._current_query:
+            self._current_page += 1
+            self._start_search(self._current_query, self._current_page)
+
+    def _start_search(self, query: str, page: int):
+        if self._search_worker and self._search_worker.isRunning():
+            return
+
+        self.search_btn.setEnabled(False)
+        self._prev_btn.setEnabled(False)
+        self._next_btn.setEnabled(False)
+        self.status_label.setText(f"Searching page {page}...")
+        self._clear_results()
+
+        self._search_worker = FitGirlSearchWorker(query, page)
+        self._search_worker.results_ready.connect(self._on_results)
+        self._search_worker.search_error.connect(self._on_error)
+        self._search_worker.finished.connect(self._on_worker_finished)
+        self._search_worker.start()
+
+    def _on_worker_finished(self):
+        self.search_btn.setEnabled(True)
+        self._update_pagination_ui()
+        self._search_worker = None
+
+    def _on_results(self, results: list[FitGirlSearchResult], pagination: FitGirlPagination):
+        self._pagination = pagination
+        if not results:
+            self.status_label.setText("No results found.")
+            return
+
+        page_info = f" (page {pagination.current_page}/{pagination.total_pages})" if pagination.total_pages > 1 else ""
+        self.status_label.setText(f"Found {len(results)} result(s){page_info}")
+        for result in results:
+            card = self._create_result_card(result)
+            self.results_layout.addWidget(card)
+
+    def _on_error(self, message: str):
+        self.status_label.setText(f"Error: {message}")
+
+    def _update_pagination_ui(self):
+        pag = self._pagination
+        if pag.total_pages <= 1:
+            self._pagination_bar.setVisible(False)
+            return
+
+        self._pagination_bar.setVisible(True)
+        self._page_input.setText(f"Page {pag.current_page} of {pag.total_pages}")
+        self._prev_btn.setEnabled(pag.current_page > 1)
+        self._next_btn.setEnabled(pag.current_page < pag.total_pages)
+
+    def _on_page_submit(self):
+        text = self._page_input.text().strip()
+        # Extract number from "Page X of Y" or just a number
+        import re as _re
+        match = _re.search(r"(\d+)", text)
+        if not match:
+            self._page_input.setText(f"Page {self._pagination.current_page} of {self._pagination.total_pages}")
+            return
+
+        page = int(match.group(1))
+        if page < 1 or page > self._pagination.total_pages:
+            self._page_input.setText(f"Page {self._pagination.current_page} of {self._pagination.total_pages}")
+            return
+
+        if page != self._pagination.current_page:
+            self._current_page = page
+            self._start_search(self._current_query, page)
+
+    def _clear_results(self):
+        while self.results_layout.count():
+            item = self.results_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    # ------------------------------------------------------------------
+    # Result card
+    # ------------------------------------------------------------------
+
+    def _create_result_card(self, result: FitGirlSearchResult) -> QWidget:
+        """Create a styled card widget for a single search result."""
+        card = QWidget()
+        card.setObjectName("resultCard")
+        card.setStyleSheet(f"""
+            QWidget#resultCard {{
+                background-color: {ModernStyle.BG_SECONDARY};
+                border: 1px solid {ModernStyle.BORDER};
+                border-left: 3px solid {ModernStyle.ACCENT};
+                border-radius: {ModernStyle.RADIUS}px;
+            }}
+            QWidget#resultCard:hover {{
+                border-color: {ModernStyle.BORDER_ACTIVE};
+                border-left-color: {ModernStyle.ACCENT_HOVER};
+                background-color: #1a2233;
+            }}
+        """)
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(8)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+
+        # --- Top row: title + metadata ---
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
+
+        title_label = QLabel(result.title)
+        title_label.setStyleSheet(f"""
+            QLabel {{
+                background: transparent;
+                font-size: 14px;
+                font-weight: 700;
+                color: {ModernStyle.TEXT_PRIMARY};
+            }}
+        """)
+        title_label.setWordWrap(True)
+        title_col.addWidget(title_label)
+
+        # Metadata row
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(8)
+
+        if result.category:
+            for cat in [c.strip() for c in result.category.split(",") if c.strip()]:
+                badge = QLabel(cat)
+                badge.setStyleSheet(f"""
+                    QLabel {{
+                        background-color: rgba(59, 130, 246, 0.15);
+                        color: {ModernStyle.ACCENT};
+                        border: 1px solid rgba(59, 130, 246, 0.3);
+                        border-radius: 4px;
+                        padding: 2px 8px;
+                        font-size: 10px;
+                        font-weight: 600;
+                    }}
+                """)
+                badge.setFixedHeight(20)
+                meta_row.addWidget(badge)
+
+        if result.date:
+            date_label = QLabel(result.date)
+            date_label.setStyleSheet(f"""
+                QLabel {{
+                    background: transparent;
+                    color: {ModernStyle.TEXT_MUTED};
+                    font-size: 11px;
+                }}
+            """)
+            meta_row.addWidget(date_label)
+
+        if result.comments:
+            comment_label = QLabel(result.comments)
+            comment_label.setStyleSheet(f"""
+                QLabel {{
+                    background: transparent;
+                    color: {ModernStyle.TEXT_MUTED};
+                    font-size: 10px;
+                }}
+            """)
+            meta_row.addWidget(comment_label)
+
+        meta_row.addStretch()
+        title_col.addLayout(meta_row)
+
+        top_row.addLayout(title_col, 1)
+        card_layout.addLayout(top_row)
+
+        # --- Buttons row ---
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        card_btn_style = f"""
+            QPushButton {{
+                background-color: {ModernStyle.BG_TERTIARY};
+                color: {ModernStyle.TEXT_PRIMARY};
+                border: 1px solid {ModernStyle.BORDER};
+                border-radius: 6px;
+                padding: 5px 16px;
+                font-size: 11px;
+                font-weight: 500;
+                min-width: 60px;
+            }}
+            QPushButton:hover {{
+                background-color: {ModernStyle.BG_HOVER};
+                border-color: {ModernStyle.BORDER_ACTIVE};
+                color: white;
+            }}
+            QPushButton:pressed {{
+                background-color: {ModernStyle.BG_ACTIVE};
+                padding-top: 6px;
+                padding-bottom: 4px;
+            }}
+        """
+
+        extract_btn = QPushButton("Extract")
+        extract_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ModernStyle.ACCENT_PRESSED};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 5px 18px;
+                font-size: 11px;
+                font-weight: 600;
+                min-width: 60px;
+            }}
+            QPushButton:hover {{
+                background-color: {ModernStyle.ACCENT};
+            }}
+            QPushButton:pressed {{
+                background-color: #153DAB;
+                padding-top: 6px;
+                padding-bottom: 4px;
+            }}
+        """)
+        extract_btn.setFixedHeight(28)
+        extract_btn.clicked.connect(lambda _, r=result: self._on_extract(r))
+        btn_row.addWidget(extract_btn)
+
+        browser_btn = QPushButton("Open Website")
+        browser_btn.setStyleSheet(card_btn_style)
+        browser_btn.setFixedHeight(28)
+        browser_btn.clicked.connect(lambda _, r=result: self._on_open_website(r))
+        btn_row.addWidget(browser_btn)
+
+        btn_row.addStretch()
+        card_layout.addLayout(btn_row)
+
+        return card
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+
+    def _on_extract(self, result: FitGirlSearchResult):
+        """Send the game URL to the main extractor input field."""
+        self.send_to_extractor.emit(result.url)
+
+    def _on_open_website(self, result: FitGirlSearchResult):
+        """Open the FitGirl page in the default browser."""
+        QDesktopServices.openUrl(QUrl(result.url))
+
+
 class SettingsDialog(QDialog):
     """Dialog for customizing delay settings"""
 
@@ -658,7 +1282,7 @@ class SettingsDialog(QDialog):
         self.v1_delay_spin.setToolTip(
             "Delay between each V1 (Cloudflare) request in milliseconds.\n"
             "Higher values reduce rate limiting but slow extraction.\n"
-            "Default: 1000 ms (1 second)"
+            "Default: 0 ms (0 second)"
         )
         v1_layout.addRow("Request Delay:", self.v1_delay_spin)
 
@@ -726,8 +1350,8 @@ class FitFetchApp(QMainWindow):
         self.extract_worker = None
 
         # Delay settings (defaults)
-        self.v1_delay = 1000  # milliseconds
-        self.v2_delay = 1000  # milliseconds
+        self.v1_delay = 0  # milliseconds
+        self.v2_delay = 0  # milliseconds
 
         self.init_ui()
         self.apply_modern_style()
@@ -770,21 +1394,34 @@ class FitFetchApp(QMainWindow):
             }}
             QPushButton:pressed {{
                 background-color: {ModernStyle.BG_ACTIVE};
+                padding-top: 7px;
+                padding-bottom: 5px;
             }}
             QPushButton:disabled {{
                 opacity: 0.5;
             }}
             
             QPushButton[primary="true"] {{
-                background-color: {ModernStyle.ACCENT};
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {ModernStyle.ACCENT}, stop:1 {ModernStyle.ACCENT_PRESSED});
                 border: none;
-                color: {ModernStyle.TEXT_PRIMARY};
+                border-radius: 10px;
+                color: white;
+                font-weight: 600;
+                padding: 8px 18px;
+                text-shadow: 0 1px 2px rgba(0,0,0,0.15);
             }}
             QPushButton[primary="true"]:hover {{
-                background-color: {ModernStyle.ACCENT_HOVER};
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {ModernStyle.ACCENT_HOVER}, stop:1 {ModernStyle.ACCENT});
             }}
             QPushButton[primary="true"]:pressed {{
-                background-color: {ModernStyle.ACCENT_PRESSED};
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {ModernStyle.ACCENT_PRESSED}, stop:1: #153DAB);
+            }}
+            QPushButton[primary="true"]:disabled {{
+                background: #4A5568;
+                color: rgba(255,255,255,0.6);
             }}
             
             QLineEdit {{
@@ -961,7 +1598,17 @@ class FitFetchApp(QMainWindow):
         # Central widget with compact spacing
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        outer_layout = QVBoxLayout(central_widget)
+        outer_layout.setSpacing(0)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Stacked widget: page 0 = extractor, page 1 = explorer
+        self._stack = QStackedWidget()
+        outer_layout.addWidget(self._stack)
+
+        # --- Page 0: Main extractor ---
+        self._extractor_page = QWidget()
+        main_layout = QVBoxLayout(self._extractor_page)
         main_layout.setSpacing(8)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -969,11 +1616,17 @@ class FitFetchApp(QMainWindow):
         menubar = self.menuBar()
 
         # File menu
-        file_menu = menubar.addMenu("File")
+        file_menu = menubar.addMenu("Menu")
 
-        fetch_action = QAction("Fetch Links", self)
-        fetch_action.triggered.connect(self.start_fetch)
-        file_menu.addAction(fetch_action)
+        explorer_action = QAction("FitGirl Explorer", self)
+        explorer_action.triggered.connect(lambda: self._switch_page(1))
+        file_menu.addAction(explorer_action)
+
+        extractor_action = QAction("Extractor", self)
+        extractor_action.triggered.connect(lambda: self._switch_page(0))
+        file_menu.addAction(extractor_action)
+
+        file_menu.addSeparator()
 
         extract_v1_action = QAction("Extract V1 (Cloudflare)", self)
         extract_v1_action.triggered.connect(lambda: self.start_extraction(method="v1"))
@@ -1060,9 +1713,13 @@ class FitFetchApp(QMainWindow):
         self.addToolBar(toolbar)
 
         # Toolbar actions
-        fetch_btn = QAction("Fetch", self)
-        fetch_btn.triggered.connect(self.start_fetch)
-        toolbar.addAction(fetch_btn)
+        explorer_btn = QAction("Explorer", self)
+        explorer_btn.triggered.connect(lambda: self._switch_page(1))
+        toolbar.addAction(explorer_btn)
+
+        extractor_btn = QAction("Extractor", self)
+        extractor_btn.triggered.connect(lambda: self._switch_page(0))
+        toolbar.addAction(extractor_btn)
 
         extract_v1_btn = QAction("Extract V1", self)
         extract_v1_btn.triggered.connect(lambda: self.start_extraction(method="v1"))
@@ -1110,13 +1767,11 @@ class FitFetchApp(QMainWindow):
         self.url_input.returnPressed.connect(self.start_fetch)
 
         self.paste_btn = QPushButton("Paste")
-        self.paste_btn.setProperty("primary", True)
         self.paste_btn.clicked.connect(self.paste_from_clipboard)
         self.paste_btn.setFixedWidth(80)
         self.paste_btn.setFixedHeight(32)
 
         self.fetch_btn = QPushButton("Fetch")
-        self.fetch_btn.setProperty("primary", True)
         self.fetch_btn.clicked.connect(self.start_fetch)
         self.fetch_btn.setFixedWidth(80)
         self.fetch_btn.setFixedHeight(32)
@@ -1201,18 +1856,24 @@ class FitFetchApp(QMainWindow):
         control_layout.addStretch()
 
         self.extract_v1_btn = QPushButton("Extract V1")
-        self.extract_v1_btn.setProperty("primary", True)
         self.extract_v1_btn.clicked.connect(lambda: self.start_extraction(method="v1"))
         self.extract_v1_btn.setEnabled(False)
         self.extract_v1_btn.setFixedHeight(32)
-        self.extract_v1_btn.setFixedWidth(100)
+        self.extract_v1_btn.setFixedWidth(110)
+        self.extract_v1_btn.setStyleSheet(
+            self.extract_v1_btn.styleSheet()
+            + "QPushButton { padding-left: 14px; padding-right: 14px; }"
+        )
 
         self.extract_v2_btn = QPushButton("Extract V2")
-        self.extract_v2_btn.setProperty("primary", True)
         self.extract_v2_btn.clicked.connect(lambda: self.start_extraction(method="v2"))
         self.extract_v2_btn.setEnabled(False)
         self.extract_v2_btn.setFixedHeight(32)
-        self.extract_v2_btn.setFixedWidth(100)
+        self.extract_v2_btn.setFixedWidth(110)
+        self.extract_v2_btn.setStyleSheet(
+            self.extract_v2_btn.styleSheet()
+            + "QPushButton { padding-left: 14px; padding-right: 14px; }"
+        )
 
         control_layout.addWidget(self.extract_v1_btn)
         control_layout.addWidget(self.extract_v2_btn)
@@ -1282,6 +1943,28 @@ class FitFetchApp(QMainWindow):
 
         # Status bar
         self.statusBar().showMessage("Ready")
+
+        # --- Page 1: FitGirl Explorer ---
+        self._explorer_widget = FitGirlExplorerWidget()
+        self._explorer_widget.send_to_extractor.connect(self._send_url_to_extractor)
+        self._stack.addWidget(self._extractor_page)  # index 0
+        self._stack.addWidget(self._explorer_widget)  # index 1
+        self._stack.setCurrentIndex(0)
+
+    # ------------------------------------------------------------------
+    # Explorer / page switching
+    # ------------------------------------------------------------------
+
+    def _switch_page(self, index: int):
+        """Switch between extractor (0) and explorer (1)."""
+        self._stack.setCurrentIndex(index)
+
+    def _send_url_to_extractor(self, url: str):
+        """Receive a FitGirl URL from the extractor, populate the input, and auto-fetch."""
+        self.url_input.setText(url)
+        self._switch_page(0)
+        self.statusBar().showMessage("URL loaded — fetching links...", 3000)
+        self.start_fetch()
 
     def paste_from_clipboard(self):
         """Paste URL from clipboard into the input field with validation"""
@@ -1417,8 +2100,8 @@ class FitFetchApp(QMainWindow):
             <h3>Settings</h3>
             <p>Go to <b>Settings &gt; Delays...</b> to customize extraction delays:</p>
             <ul>
-              <li><b>V1 Request Delay:</b> Time between each Cloudflare request (default: 1000 ms). Increase if rate-limited.</li>
-              <li><b>V2 Request Delay:</b> Time between each browser request (default: 1000 ms). Increase if rate-limited.</li>
+              <li><b>V1 Request Delay:</b> Time between each Cloudflare request (default: 0 ms). Increase if rate-limited.</li>
+              <li><b>V2 Request Delay:</b> Time between each browser request (default: 0 ms). Increase if rate-limited.</li>
             </ul>
 
             <hr>
@@ -1461,7 +2144,7 @@ class FitFetchApp(QMainWindow):
             try:
                 dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
                 date_str = dt.strftime("%Y-%m-%d")
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 date_str = published_at[:10]
 
         dlg = QDialog(self)
@@ -1512,10 +2195,12 @@ class FitFetchApp(QMainWindow):
             }}
             QPushButton:hover {{
                 background-color: {ModernStyle.BG_HOVER};
-                border-color: {ModernStyle.ACCENT};
+                border-color: {ModernStyle.BORDER_ACTIVE};
             }}
             QPushButton:pressed {{
-                background-color: {ModernStyle.ACCENT_PRESSED};
+                background-color: {ModernStyle.BG_ACTIVE};
+                padding-top: 7px;
+                padding-bottom: 5px;
             }}
         """
 
@@ -1569,7 +2254,7 @@ class FitFetchApp(QMainWindow):
             try:
                 dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
                 date_str = dt.strftime("%Y-%m-%d")
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 date_str = published_at[:10]
 
         dlg = QDialog(self)
@@ -1619,10 +2304,12 @@ class FitFetchApp(QMainWindow):
             }}
             QPushButton:hover {{
                 background-color: {ModernStyle.BG_HOVER};
-                border-color: {ModernStyle.ACCENT};
+                border-color: {ModernStyle.BORDER_ACTIVE};
             }}
             QPushButton:pressed {{
-                background-color: {ModernStyle.ACCENT_PRESSED};
+                background-color: {ModernStyle.BG_ACTIVE};
+                padding-top: 7px;
+                padding-bottom: 5px;
             }}
         """
 
