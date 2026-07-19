@@ -9,7 +9,6 @@ A modern GUI tool for extracting direct download links from FitGirl repack pages
 import sys
 import re
 import os
-import json
 import asyncio
 import threading
 from datetime import datetime
@@ -18,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import cloudscraper
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import requests
 from bs4 import BeautifulSoup
 import zendriver as zd
 
@@ -45,7 +45,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QDialogButtonBox,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QUrl, QTimer
 from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices
 import traceback
 
@@ -471,13 +471,18 @@ class ModernGroupBox(QGroupBox):
 
 
 class CheckUpdateWorker(QThread):
-    """Background worker to check GitHub for latest release"""
+    """Background worker to check GitHub for latest release.
 
-    update_found = pyqtSignal(
-        str, str, str, str, str
-    )  # tag, body, html_url, published_at, download_url
+    Uses urllib.request directly with a short timeout for fast, lightweight checks.
+    Emits signals for update found, no update, and errors — all safe to connect
+    to UI slots since cross-thread signal delivery is queued by Qt.
+    """
+
+    update_found = pyqtSignal(str, str, str, str, str)
     update_error = pyqtSignal(str)
     no_update = pyqtSignal(str, str, str, str)
+
+    NETWORK_TIMEOUT = 8  # seconds
 
     def __init__(self, owner, repo, current_version, parent=None):
         super().__init__(parent)
@@ -486,50 +491,61 @@ class CheckUpdateWorker(QThread):
         self.current_version = current_version
 
     def run(self):
+        url = f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/latest"
+
         try:
-            url = (
-                f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/latest"
+            resp = requests.get(
+                url,
+                headers={
+                    "Accept": "application/vnd.github.v3+json",
+                    "User-Agent": f"{APP_NAME}/{self.current_version}",
+                },
+                timeout=self.NETWORK_TIMEOUT,
             )
-            cf = CloudflareBypass(threads=1)
-            _, text, status, _ = cf.fetch(url)
-
-            if status is None:
-                self.update_error.emit(
-                    "Could not connect to GitHub. Check your internet."
-                )
-                return
-            if status == 404:
-                self.update_error.emit("No releases found on GitHub.")
-                return
-            if status == 403:
-                self.update_error.emit(
-                    "GitHub is currently rate limiting update checks. Please try again later."
-                )
-                return
-            if status != 200:
-                self.update_error.emit(f"GitHub API returned status {status}.")
-                return
-
-            data = json.loads(text)
-
-            tag = data.get("tag_name", "").lstrip("v")
-            body = data.get("body", "No changelog available.")
-            html_url = data.get("html_url", "")
-            published_at = data.get("published_at", "")
-
-            download_url = ""
-            for asset in data.get("assets", []):
-                name = asset.get("name", "")
-                if name.lower().endswith(".exe"):
-                    download_url = asset.get("browser_download_url", "")
-                    break
-
-            if self._version_gt(tag, self.current_version):
-                self.update_found.emit(tag, body, html_url, published_at, download_url)
-            else:
-                self.no_update.emit(tag, body, html_url, published_at)
-        except Exception as e:
+        except requests.ConnectionError:
+            self.update_error.emit("Could not connect to GitHub. Check your internet.")
+            return
+        except requests.Timeout:
+            self.update_error.emit("GitHub request timed out. Try again later.")
+            return
+        except requests.RequestException as e:
             self.update_error.emit(f"Update check failed: {e}")
+            return
+
+        if resp.status_code == 404:
+            self.update_error.emit("No releases found on GitHub.")
+            return
+        if resp.status_code == 403:
+            self.update_error.emit(
+                "GitHub is currently rate limiting update checks. Please try again later."
+            )
+            return
+        if resp.status_code != 200:
+            self.update_error.emit(f"GitHub API returned status {resp.status_code}.")
+            return
+
+        try:
+            data = resp.json()
+        except (ValueError, KeyError) as e:
+            self.update_error.emit(f"Invalid response from GitHub: {e}")
+            return
+
+        tag = data.get("tag_name", "").lstrip("v")
+        body = data.get("body", "No changelog available.")
+        html_url = data.get("html_url", "")
+        published_at = data.get("published_at", "")
+
+        download_url = ""
+        for asset in data.get("assets", []):
+            name = asset.get("name", "")
+            if name.lower().endswith(".exe"):
+                download_url = asset.get("browser_download_url", "")
+                break
+
+        if self._version_gt(tag, self.current_version):
+            self.update_found.emit(tag, body, html_url, published_at, download_url)
+        else:
+            self.no_update.emit(tag, body, html_url, published_at)
 
     @staticmethod
     def _version_gt(remote, local):
@@ -542,6 +558,81 @@ class CheckUpdateWorker(QThread):
             return parse(remote) > parse(local)
         except ValueError, TypeError:
             return False
+
+
+class UpdateManager(QObject):
+    """Manages background and manual update checks.
+
+    Single entry point: check_for_updates(silent=True/False).
+    - silent=True  : no UI feedback, errors logged internally, only shows dialog
+                     if an update is actually available.
+    - silent=False : shows status bar messages, error dialogs, and 'up to date' dialog.
+
+    All UI interaction happens via Qt signals connected to the main window slots.
+    """
+
+    # Signals forwarded from the worker — connect these on the main window
+    update_available = pyqtSignal(
+        str, str, str, str, str
+    )  # tag, body, html_url, published_at, download_url
+    check_failed = pyqtSignal(str)  # error message
+    check_started = pyqtSignal()  # emitted when a check begins
+
+    def __init__(self, owner, repo, current_version, parent=None):
+        super().__init__(parent)
+        self.owner = owner
+        self.repo = repo
+        self.current_version = current_version
+        self._worker = None
+
+    def check_for_updates(self, silent=True):
+        """Start an update check.
+
+        Args:
+            silent: If True, suppresses all UI except the update-available dialog.
+                    If False, shows loading messages, error dialogs, and up-to-date dialog.
+        """
+        # Prevent overlapping checks
+        if self._worker and self._worker.isRunning():
+            return
+
+        self._silent = silent
+        self.check_started.emit()
+
+        self._worker = CheckUpdateWorker(
+            self.owner, self.repo, self.current_version, parent=None
+        )
+        self._worker.update_found.connect(self._on_update_found)
+        self._worker.update_error.connect(self._on_check_error)
+        self._worker.no_update.connect(self._on_no_update)
+        self._worker.finished.connect(self._on_worker_finished)
+        self._worker.start()
+
+    def _on_worker_finished(self):
+        """Clean up worker reference after thread completes."""
+        self._worker = None
+
+    def _on_update_found(self, tag, body, html_url, published_at, download_url):
+        """An update was found — always show the dialog (silent or not)."""
+        self.update_available.emit(tag, body, html_url, published_at, download_url)
+
+    def _on_check_error(self, message):
+        """Handle check failure based on silent mode."""
+        if self._silent:
+            # Silent mode: swallow the error, do not show any dialog or status
+            return
+        self.check_failed.emit(message)
+
+    def _on_no_update(self, tag, body, html_url, published_at):
+        """No update found — only show dialog in manual (non-silent) mode."""
+        if self._silent:
+            return
+        # Emit a special signal or let the main window handle it directly
+        # We store the data and let the main window decide
+        self.no_update_found.emit(tag, body, html_url, published_at)
+
+    # Additional signal for "no update" in manual mode
+    no_update_found = pyqtSignal(str, str, str, str)
 
 
 class SettingsDialog(QDialog):
@@ -640,6 +731,15 @@ class FitFetchApp(QMainWindow):
 
         self.init_ui()
         self.apply_modern_style()
+
+        # Update manager — handles both silent startup and manual checks
+        self._update_manager = UpdateManager(OWNER, APP_NAME.lower(), VERSION, self)
+        self._update_manager.update_available.connect(self._on_update_found)
+        self._update_manager.check_failed.connect(self._on_update_error)
+        self._update_manager.no_update_found.connect(self._on_no_update)
+
+        # Flag to ensure the startup update dialog only appears once per session
+        self._startup_update_shown = False
 
     def apply_modern_style(self):
         """Apply modern dark theme with compact design"""
@@ -1351,12 +1451,9 @@ class FitFetchApp(QMainWindow):
             )
 
     def check_for_updates(self):
+        """Manual 'Check for Updates' from the Settings menu — non-silent."""
         self.statusBar().showMessage("Checking for updates...", 5000)
-        self._update_worker = CheckUpdateWorker(OWNER, APP_NAME.lower(), VERSION, self)
-        self._update_worker.update_found.connect(self._on_update_found)
-        self._update_worker.update_error.connect(self._on_update_error)
-        self._update_worker.no_update.connect(self._on_no_update)
-        self._update_worker.start()
+        self._update_manager.check_for_updates(silent=False)
 
     def _on_update_found(self, tag, body, html_url, published_at, download_url):
         date_str = ""
@@ -1826,6 +1923,19 @@ class FitFetchApp(QMainWindow):
         self.link_count.setText("0 extracted")
         self.update_status("Cleared output")
 
+    def showEvent(self, event):
+        """Trigger a silent background update check after the window is fully visible."""
+        super().showEvent(event)
+        # Delay slightly so the UI is fully rendered before starting the network call
+        QTimer.singleShot(1500, self._startup_update_check)
+
+    def _startup_update_check(self):
+        """Run the silent update check on startup (once per launch)."""
+        if self._startup_update_shown:
+            return
+        self._startup_update_shown = True
+        self._update_manager.check_for_updates(silent=True)
+
     def closeEvent(self, event):
         if (
             hasattr(self, "extract_worker")
@@ -1842,6 +1952,11 @@ class FitFetchApp(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 event.ignore()
                 return
+
+        # Stop the update check worker if still running
+        if self._update_manager._worker and self._update_manager._worker.isRunning():
+            self._update_manager._worker.quit()
+            self._update_manager._worker.wait(3000)
 
         if hasattr(self, "worker") and self.worker and self.worker.isRunning():
             self.worker.terminate()
