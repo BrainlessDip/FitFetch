@@ -58,7 +58,7 @@ logging.basicConfig(
 logger = logging.getLogger("FitFetch")
 
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 APP_NAME = "FitFetch"
 OWNER = "BrainlessDip"
 
