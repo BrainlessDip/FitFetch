@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QMainWindow,
     QWidget,
     QVBoxLayout,
@@ -42,7 +43,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QUrl, QTimer
-from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices, QPixmap
+from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -156,6 +157,65 @@ class CloudflareBypass:
                     "headers": headers,
                 }
         return results
+
+
+class BrowserDetector:
+    """Detects installed Chromium-based browsers on the system."""
+
+    BROWSER_PATHS = {
+        "Chrome": [
+            r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+            r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+            r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ],
+        "Edge": [
+            r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+            r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+            r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe",
+            "/usr/bin/microsoft-edge",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ],
+        "Brave": [
+            r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
+            r"%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe",
+            r"%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe",
+            "/usr/bin/brave-browser",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        ],
+        "Chromium": [
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+        ],
+    }
+
+    @classmethod
+    def find_all_browsers(cls) -> dict[str, str]:
+        """Find all installed browsers and return {name: path} dict."""
+        found = {}
+        for name, paths in cls.BROWSER_PATHS.items():
+            for path_template in paths:
+                path = os.path.expandvars(path_template)
+                if os.path.isfile(path):
+                    found[name] = path
+                    break
+        return found
+
+    @classmethod
+    def detect_default_browser(cls) -> str | None:
+        """Detect the first available browser path, or None."""
+        browsers = cls.find_all_browsers()
+        if browsers:
+            return next(iter(browsers.values()))
+        return None
+
+    @classmethod
+    def get_browser_path(cls, name: str) -> str | None:
+        """Get the path for a specific browser by name."""
+        browsers = cls.find_all_browsers()
+        return browsers.get(name)
 
 
 class CloudflareWorker(QThread):
@@ -290,11 +350,18 @@ class ZendriverWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
-    def __init__(self, links: list[str], delay: int = 3, parent=None):
+    def __init__(
+        self,
+        links: list[str],
+        delay: int = 3,
+        browser_executable_path: str | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.links = links
         self.total_links = len(links)
         self.delay = delay
+        self.browser_executable_path = browser_executable_path
         self.browser = None
         self._shutdown_requested = False
 
@@ -311,9 +378,9 @@ class ZendriverWorker(QThread):
 
         try:
             self.status_update.emit("Initializing browser (V2)...")
-            self.browser = await zd.start(
-                headless=False,
-                browser_args=[
+            start_kwargs = {
+                "headless": False,
+                "browser_args": [
                     "--window-size=500,550",
                     "--no-first-run",
                     "--no-default-browser-check",
@@ -322,7 +389,10 @@ class ZendriverWorker(QThread):
                     "--disable-background-networking",
                     "--disable-popup-blocking",
                 ],
-            )
+            }
+            if self.browser_executable_path:
+                start_kwargs["browser_executable_path"] = self.browser_executable_path
+            self.browser = await zd.start(**start_kwargs)
 
             self.status_update.emit(f"Processing {self.total_links} links...")
             tab = await self.browser.get("https://fuckingfast.co")
@@ -565,6 +635,135 @@ class ModernStyle:
     @classmethod
     def muted_label_style(cls) -> str:
         return f"color: {cls.TEXT_MUTED}; font-size: 11px;"
+
+    @classmethod
+    def combobox_style(cls) -> str:
+        return f"""
+            QComboBox {{
+                background-color: {cls.BG_TERTIARY};
+                color: {cls.TEXT_PRIMARY};
+                border: 1px solid {cls.BORDER};
+                border-radius: {cls.RADIUS}px;
+                padding: 6px 12px;
+                padding-right: 30px;
+                font-size: {cls.FONT_SMALL}px;
+                font-weight: 500;
+                min-height: 18px;
+            }}
+            QComboBox:hover {{
+                background-color: {cls.BG_HOVER};
+                border-color: {cls.BORDER_ACTIVE};
+            }}
+            QComboBox:focus {{
+                border-color: {cls.ACCENT};
+                background-color: {cls.BG_HOVER};
+            }}
+            QComboBox:pressed {{
+                background-color: {cls.BG_ACTIVE};
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 28px;
+                border: none;
+                border-left: 1px solid {cls.BORDER};
+                border-top-right-radius: {cls.RADIUS}px;
+                border-bottom-right-radius: {cls.RADIUS}px;
+                background-color: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid {cls.TEXT_SECONDARY};
+                margin-right: 8px;
+            }}
+            QComboBox::down-arrow:hover {{
+                border-top-color: {cls.TEXT_PRIMARY};
+            }}
+            QComboBox:on {{
+                background-color: {cls.BG_ACTIVE};
+                border-color: {cls.ACCENT};
+            }}
+            QComboBox:on QComboBox::drop-down {{
+                border-left-color: {cls.ACCENT};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {cls.BG_SECONDARY};
+                color: {cls.TEXT_PRIMARY};
+                border: 1px solid {cls.BORDER_ACTIVE};
+                border-radius: {cls.RADIUS}px;
+                padding: 4px 0px;
+                selection-background-color: {cls.ACCENT};
+                selection-color: white;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 8px 14px;
+                min-height: 20px;
+                border: none;
+                border-radius: 0px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {cls.BG_HOVER};
+                color: {cls.TEXT_PRIMARY};
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: {cls.ACCENT};
+                color: white;
+            }}
+        """
+
+    @classmethod
+    def toolbar_style(cls) -> str:
+        return f"""
+            QToolBar {{
+                background-color: {cls.BG_SECONDARY};
+                border: none;
+                border-bottom: 1px solid {cls.BORDER};
+                padding: 6px 8px;
+                spacing: 4px;
+                margin: 0px;
+            }}
+            QToolBar::separator {{
+                background-color: {cls.BORDER};
+                width: 1px;
+                height: 20px;
+                margin: 4px 6px;
+            }}
+            QToolBar QToolButton {{
+                background-color: transparent;
+                color: {cls.TEXT_PRIMARY};
+                border: 1px solid transparent;
+                border-radius: {cls.RADIUS}px;
+                padding: 6px 12px;
+                font-size: {cls.FONT_SMALL}px;
+                font-weight: 500;
+                min-width: 40px;
+                min-height: 20px;
+                margin: 0px 2px;
+            }}
+            QToolBar QToolButton:hover {{
+                background-color: {cls.BG_HOVER};
+                border-color: {cls.BORDER};
+            }}
+            QToolBar QToolButton:pressed {{
+                background-color: {cls.BG_ACTIVE};
+                color: white;
+            }}
+            QToolBar QToolButton:checked {{
+                background-color: {cls.ACCENT};
+                color: white;
+                border-color: {cls.ACCENT};
+            }}
+            QToolBar QToolButton:disabled {{
+                color: {cls.TEXT_MUTED};
+                background-color: transparent;
+            }}
+        """
 
 
 class ModernGroupBox(QGroupBox):
@@ -1489,6 +1688,9 @@ class FitFetchApp(QMainWindow):
         self.v1_delay = 0  # milliseconds
         self.v2_delay = 0  # milliseconds
 
+        # Browser selection (None = auto detect)
+        self._selected_browser = None
+
         self.init_ui()
         self.apply_modern_style()
 
@@ -1724,6 +1926,83 @@ class FitFetchApp(QMainWindow):
                 border-radius: {ModernStyle.RADIUS}px;
                 padding: 4px 8px;
             }}
+            
+            QComboBox {{
+                background-color: {ModernStyle.BG_TERTIARY};
+                color: {ModernStyle.TEXT_PRIMARY};
+                border: 1px solid {ModernStyle.BORDER};
+                border-radius: {ModernStyle.RADIUS}px;
+                padding: 6px 12px;
+                padding-right: 30px;
+                font-size: {ModernStyle.FONT_SMALL}px;
+                font-weight: 500;
+                min-height: 18px;
+            }}
+            QComboBox:hover {{
+                background-color: {ModernStyle.BG_HOVER};
+                border-color: {ModernStyle.BORDER_ACTIVE};
+            }}
+            QComboBox:focus {{
+                border-color: {ModernStyle.ACCENT};
+                background-color: {ModernStyle.BG_HOVER};
+            }}
+            QComboBox:pressed {{
+                background-color: {ModernStyle.BG_ACTIVE};
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 28px;
+                border: none;
+                border-left: 1px solid {ModernStyle.BORDER};
+                border-top-right-radius: {ModernStyle.RADIUS}px;
+                border-bottom-right-radius: {ModernStyle.RADIUS}px;
+                background-color: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid {ModernStyle.TEXT_SECONDARY};
+                margin-right: 8px;
+            }}
+            QComboBox::down-arrow:hover {{
+                border-top-color: {ModernStyle.TEXT_PRIMARY};
+            }}
+            QComboBox:on {{
+                background-color: {ModernStyle.BG_ACTIVE};
+                border-color: {ModernStyle.ACCENT};
+            }}
+            QComboBox:on QComboBox::drop-down {{
+                border-left-color: {ModernStyle.ACCENT};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {ModernStyle.BG_SECONDARY};
+                color: {ModernStyle.TEXT_PRIMARY};
+                border: 1px solid {ModernStyle.BORDER_ACTIVE};
+                border-radius: {ModernStyle.RADIUS}px;
+                padding: 4px 0px;
+                selection-background-color: {ModernStyle.ACCENT};
+                selection-color: white;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 8px 14px;
+                min-height: 20px;
+                border: none;
+                border-radius: 0px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {ModernStyle.BG_HOVER};
+                color: {ModernStyle.TEXT_PRIMARY};
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: {ModernStyle.ACCENT};
+                color: white;
+            }}
         """)
 
     def init_ui(self):
@@ -1812,6 +2091,10 @@ class FitFetchApp(QMainWindow):
         delays_action.triggered.connect(self.open_settings)
         settings_menu.addAction(delays_action)
 
+        browser_action = QAction("Browser", self)
+        browser_action.triggered.connect(self.open_browser_settings)
+        settings_menu.addAction(browser_action)
+
         settings_menu.addSeparator()
 
         check_update_action = QAction("Check for Updates", self)
@@ -1842,20 +2125,9 @@ class FitFetchApp(QMainWindow):
         # Toolbar
         toolbar = QToolBar()
         toolbar.setMovable(False)
-        toolbar.setStyleSheet(f"""
-            QToolBar {{
-                background-color: {ModernStyle.BG_SECONDARY};
-                border: none;
-                border-bottom: 1px solid {ModernStyle.BORDER};
-                padding: 2px;
-                spacing: 4px;
-            }}
-            QToolBar::separator {{
-                width: 1px;
-                background-color: {ModernStyle.BORDER};
-                margin: 4px 8px;
-            }}
-        """)
+        toolbar.setFloatable(False)
+        toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
+        toolbar.setStyleSheet(ModernStyle.toolbar_style())
         self.addToolBar(toolbar)
 
         # Toolbar actions
@@ -2000,6 +2272,33 @@ class FitFetchApp(QMainWindow):
         control_layout.addWidget(self.select_all_btn)
         control_layout.addWidget(self.deselect_all_btn)
         control_layout.addStretch()
+
+        # Browser selection combo
+        self.browser_combo = QComboBox()
+        self.browser_combo.setFixedHeight(32)
+        self.browser_combo.setFixedWidth(140)
+        self.browser_combo.setStyleSheet(ModernStyle.combobox_style())
+        self.browser_combo.setToolTip(
+            "Select which Chromium-based browser to use for V2 extraction.\n"
+            "Auto Detect will use the first available browser found."
+        )
+
+        detected = BrowserDetector.find_all_browsers()
+        self.browser_combo.addItem("Auto Detect", None)
+        self._browser_paths = {"Auto Detect": None}
+        for name in ["Chrome", "Edge", "Brave", "Chromium"]:
+            if name in detected:
+                self.browser_combo.addItem(name, name)
+                self._browser_paths[name] = detected[name]
+
+        if self._selected_browser and self._selected_browser in detected:
+            for i in range(self.browser_combo.count()):
+                if self.browser_combo.itemData(i) == self._selected_browser:
+                    self.browser_combo.setCurrentIndex(i)
+                    break
+
+        self.browser_combo.currentIndexChanged.connect(self._on_browser_changed)
+        control_layout.addWidget(self.browser_combo)
 
         self.extract_v1_btn = QPushButton("Extract V1")
         self.extract_v1_btn.clicked.connect(lambda: self.start_extraction(method="v1"))
@@ -2265,6 +2564,61 @@ class FitFetchApp(QMainWindow):
                 3000,
             )
 
+    def open_browser_settings(self):
+        """Show browser information dialog."""
+        detected = BrowserDetector.find_all_browsers()
+        selected = self._selected_browser
+
+        # Determine active browser info
+        if selected:
+            active_path = BrowserDetector.get_browser_path(selected)
+            active_name = selected
+        else:
+            active_path = BrowserDetector.detect_default_browser()
+            active_name = (
+                next(
+                    (name for name, path in detected.items() if path == active_path),
+                    "None",
+                )
+                if active_path
+                else "None"
+            )
+
+        # Build info text
+        selected_text = selected if selected else "Auto Detect"
+        detected_text = ", ".join(detected.keys()) if detected else "None found"
+
+        if active_path:
+            path_text = active_path
+        else:
+            path_text = "No browser found"
+
+        if not selected and active_path:
+            detail_text = f"Auto-detected: {active_name}"
+        elif not selected and not active_path:
+            detail_text = "No browser found. Please install Chrome, Edge, or Brave."
+        else:
+            detail_text = ""
+
+        info_html = f"""
+            <h3>Browser (V2)</h3>
+            <p><b>Selected:</b> {selected_text}</p>
+            <p><b>Detected:</b> {detected_text}</p>
+            <p><b>Path:</b><br><span style="color: {"green" if active_path else "red"};">{path_text}</span></p>
+            {"<p><i>" + detail_text + "</i></p>" if detail_text else ""}
+            <hr>
+            <p style="color: gray; font-size: 11px;">
+                Change the browser selection using the dropdown next to the Extract buttons.
+            </p>
+        """
+
+        msgBox = QMessageBox(self)
+        msgBox.setWindowTitle("Browser Settings")
+        msgBox.setTextFormat(Qt.TextFormat.RichText)
+        msgBox.setText(info_html)
+        msgBox.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msgBox.exec()
+
     def check_for_updates(self):
         """Manual 'Check for Updates' from the Settings menu — non-silent."""
         self.statusBar().showMessage("Checking for updates...", 5000)
@@ -2521,6 +2875,10 @@ class FitFetchApp(QMainWindow):
     def on_checkbox_changed(self, link, state):
         self.update_parts_count()
 
+    def _on_browser_changed(self, index):
+        """Update selected browser when combo changes."""
+        self._selected_browser = self.browser_combo.currentData()
+
     def select_all(self):
         for checkbox in self.checkboxes:
             checkbox.setChecked(True)
@@ -2598,10 +2956,38 @@ class FitFetchApp(QMainWindow):
             )
             self.update_status("Starting V1 extraction (Cloudflare bypass)...")
         else:
+            # Get browser path for V2 extraction
+            if self._selected_browser:
+                browser_path = BrowserDetector.get_browser_path(self._selected_browser)
+            else:
+                browser_path = BrowserDetector.detect_default_browser()
+
+            if not browser_path:
+                QMessageBox.critical(
+                    self,
+                    "No Browser Found",
+                    "No Chromium-based browser found on your system.\n\n"
+                    "Please install one of the following browsers:\n"
+                    "- Google Chrome\n"
+                    "- Microsoft Edge\n"
+                    "- Brave Browser\n"
+                    "- Chromium\n\n"
+                    "Then restart the application and try again.",
+                )
+                self.fetch_btn.setEnabled(True)
+                self.extract_v1_btn.setEnabled(True)
+                self.extract_v2_btn.setEnabled(True)
+                return
+
             self.extract_worker = ZendriverWorker(
-                selected, delay=self.v2_delay, parent=self
+                selected,
+                delay=self.v2_delay,
+                browser_executable_path=browser_path,
+                parent=self,
             )
-            self.update_status("Starting V2 extraction (Browser)...")
+            self.update_status(
+                f"Starting V2 extraction (Browser: {os.path.basename(browser_path)})..."
+            )
 
         self.extract_worker.status_update.connect(self.update_status)
         self.extract_worker.progress_update.connect(self.progress_bar.setValue)
