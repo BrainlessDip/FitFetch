@@ -1,8 +1,8 @@
 # FitFetch - FitGirl Repack Link Extractor
 
-[![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](https://github.com/BrainlessDip/fitfetch)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/BrainlessDip/fitfetch)
 [![Python](https://img.shields.io/badge/python-3.14+-green.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 A modern, dark-themed GUI tool for extracting FuckingFast direct download links from FitGirl repack pages. Built with PyQt6 and zendriver
 
@@ -55,6 +55,42 @@ uv sync
 ```bash
 uv run main.py
 ````
+
+## Installation Notice
+
+Download FitFetch from the [latest release](https://github.com/BrainlessDip/FitFetch/releases/latest).
+
+**Option 1:** Download the `.exe` installer and follow the setup wizard. Because FitFetch is currently an unsigned application, Windows Defender may occasionally flag the installer as a false positive. If this happens, open Windows Security → Protection history, restore the file, and choose "Allow on device" if prompted.
+
+**Option 2 (Recommended):** Download the `.zip` version, extract it to a folder, and run `FitFetch.exe`. Do not delete or move the `_internal` folder, as it contains files required for the application to work.
+
+If you're unsure, you can always scan the ZIP or executable with [VirusTotal](https://www.virustotal.com/) before running it.
+
+## PowerShell Installers
+
+FitFetch provides PowerShell scripts for automated installation.
+
+### Portable.ps1 (No Install)
+
+Downloads and runs the latest portable release without modifying your system.
+
+```powershell
+irm "https://fitfetch.pages.dev/installers/Portable.ps1" | iex
+```
+
+### Setup.ps1 (Installer)
+
+```powershell
+irm "https://fitfetch.pages.dev/installers/Setup.ps1" | iex
+```
+
+### Running on a Virtual Machine
+
+If you prefer not to run FitFetch on your main device, you can use a cloud Windows VM.
+
+- [AppOnFly](https://www.apponfly.com/) — Windows VPS in your browser. Note: FitGirl sites have a high block rate on cloud/VPS IPs, so extraction may be limited.
+
+> **Tip:** Running FitFetch on your own physical device gives the best results, as cloud IPs are often blocked by FitGirl pages.
 
 ## Dependencies
 
@@ -116,7 +152,7 @@ fitfetch/
 
 To build the executable (.exe), run the following command:
 ```bash
-pyinstaller --onefile --windowed --clean --noconfirm --name FitFetch --icon favicon.ico --optimize 2 --strip  --add-data "favicon.ico;." main.py
+pyinstaller --onedir --windowed --clean --noconfirm --name FitFetch --icon favicon.ico --optimize 2  --add-data "favicon.ico;." main.py
 ```
 
 ⚠️ This executable may be flagged by some antivirus software due to false positives commonly associated with pyinstaller compiled applications.

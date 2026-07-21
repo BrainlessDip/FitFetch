@@ -633,7 +633,7 @@ class CheckUpdateWorker(QThread):
             return
         if resp.status_code == 403:
             self.update_error.emit(
-                "GitHub is currently rate limiting update checks. Please try again later."
+                "Update check unavailable because GitHub's rate limit has been exceeded. Please try again later or check the official releases page."
             )
             return
         if resp.status_code != 200:
@@ -1808,15 +1808,25 @@ class FitFetchApp(QMainWindow):
         # Settings menu
         settings_menu = menubar.addMenu("Settings")
 
-        delays_action = QAction("Delays...", self)
+        delays_action = QAction("Delays", self)
         delays_action.triggered.connect(self.open_settings)
         settings_menu.addAction(delays_action)
 
         settings_menu.addSeparator()
 
-        check_update_action = QAction("Check for Updates...", self)
+        check_update_action = QAction("Check for Updates", self)
         check_update_action.triggered.connect(self.check_for_updates)
         settings_menu.addAction(check_update_action)
+
+        import os
+
+        self._uninstaller_path = os.path.join(
+            os.path.dirname(os.path.abspath(sys.argv[0])), "unins000.exe"
+        )
+        if os.path.isfile(self._uninstaller_path):
+            uninstall_action = QAction("Uninstall FitFetch", self)
+            uninstall_action.triggered.connect(self._run_uninstaller)
+            settings_menu.addAction(uninstall_action)
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -2259,6 +2269,25 @@ class FitFetchApp(QMainWindow):
         """Manual 'Check for Updates' from the Settings menu — non-silent."""
         self.statusBar().showMessage("Checking for updates...", 5000)
         self._update_manager.check_for_updates(silent=False)
+
+    def _run_uninstaller(self):
+        reply = QMessageBox.question(
+            self,
+            "Uninstall FitFetch",
+            "Are you sure you want to uninstall FitFetch?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            import subprocess
+
+            subprocess.Popen(
+                [
+                    self._uninstaller_path,
+                    "/VERYSILENT",
+                ]
+            )
+            self.close()
 
     def _on_update_found(self, tag, body, html_url, published_at, download_url):
         self._show_version_dialog(
