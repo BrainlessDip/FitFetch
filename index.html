@@ -227,6 +227,118 @@
         animation: fadeInUp 0.6s ease 0.3s both;
       }
 
+      .hero-commands {
+        margin-top: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        animation: fadeInUp 0.6s ease 0.4s both;
+      }
+
+      .hero-commands-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-muted);
+      }
+
+      .cmd-card {
+        width: 100%;
+        max-width: 640px;
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        overflow: hidden;
+        transition: border-color var(--transition);
+      }
+
+      .cmd-card:hover {
+        border-color: var(--border-color-hover);
+      }
+
+      .cmd-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        background: rgba(255, 255, 255, 0.03);
+        border-bottom: 1px solid var(--border-color);
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        user-select: none;
+      }
+
+      .cmd-dots {
+        display: flex;
+        gap: 6px;
+      }
+
+      .cmd-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+
+      .cmd-dot.red { background: #ff5f56; }
+      .cmd-dot.yellow { background: #ffbd2e; }
+      .cmd-dot.green { background: #27c93f; }
+
+      .cmd-body {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        gap: 12px;
+      }
+
+      .cmd-body code {
+        font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+        font-size: 0.82rem;
+        color: #e879f9;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .cmd-body .cmd-prompt {
+        color: var(--text-muted);
+        user-select: none;
+        margin-right: 8px;
+      }
+
+      .cmd-body .cmd-text {
+        color: #e879f9;
+      }
+
+      .cmd-copy-btn {
+        flex-shrink: 0;
+        background: none;
+        border: 1px solid var(--border-color);
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-family: var(--font);
+        transition: all var(--transition);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .cmd-copy-btn:hover {
+        color: var(--text-primary);
+        border-color: var(--border-color-hover);
+        background: var(--bg-card-hover);
+      }
+
+      .cmd-copy-btn.copied {
+        color: var(--success);
+        border-color: var(--success);
+      }
+
       .btn {
         display: inline-flex;
         align-items: center;
@@ -1115,7 +1227,7 @@
             Extract direct download links from FitGirl Repacks in seconds.
           </p>
           <div class="hero-buttons">
-            <a href="#" class="btn btn-primary" id="heroDownloadBtn">
+            <a href="https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe" class="btn btn-primary" id="heroDownloadBtn">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -1147,6 +1259,43 @@
               </svg>
               View GitHub
             </a>
+          </div>
+          <div class="hero-commands">
+            <span class="hero-commands-label">Quick Install via PowerShell</span>
+            <div class="cmd-card">
+              <div class="cmd-header">
+                <span>Portable (recommended)</span>
+                <div class="cmd-dots">
+                  <span class="cmd-dot red"></span>
+                  <span class="cmd-dot yellow"></span>
+                  <span class="cmd-dot green"></span>
+                </div>
+              </div>
+              <div class="cmd-body">
+                <code><span class="cmd-prompt">PS&gt;</span><span class="cmd-text">irm "https://fitfetch.pages.dev/installers/Portable.ps1" | iex</span></code>
+                <button class="cmd-copy-btn" data-cmd='irm "https://fitfetch.pages.dev/installers/Portable.ps1" | iex'>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div class="cmd-card">
+              <div class="cmd-header">
+                <span>Setup Installer</span>
+                <div class="cmd-dots">
+                  <span class="cmd-dot red"></span>
+                  <span class="cmd-dot yellow"></span>
+                  <span class="cmd-dot green"></span>
+                </div>
+              </div>
+              <div class="cmd-body">
+                <code><span class="cmd-prompt">PS&gt;</span><span class="cmd-text">irm "https://fitfetch.pages.dev/installers/Setup.ps1" | iex</span></code>
+                <button class="cmd-copy-btn" data-cmd='irm "https://fitfetch.pages.dev/installers/Setup.ps1" | iex'>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                  Copy
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1255,15 +1404,14 @@
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 >
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                  <line x1="8" y1="21" x2="16" y2="21" />
-                  <line x1="12" y1="17" x2="12" y2="21" />
+                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                  <line x1="12" y1="11" x2="12" y2="17" />
+                  <line x1="9" y1="14" x2="15" y2="14" />
                 </svg>
               </div>
-              <h3>Windows Executable</h3>
+              <h3>Built-in Repack Explorer</h3>
               <p>
-                Native Windows .exe — runs directly on your system without
-                additional dependencies.
+                Browse and search FitGirl repacks directly within the app — find your games faster with the integrated explorer.
               </p>
             </div>
             <div class="feature-card fade-in">
@@ -1515,6 +1663,25 @@
         });
       }
 
+      function copyCmd(btn, cmd) {
+        navigator.clipboard.writeText(cmd).then(() => {
+          btn.classList.add("copied");
+          btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg> Copied`;
+          setTimeout(() => {
+            btn.classList.remove("copied");
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy`;
+          }, 2000);
+        });
+      }
+
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest(".cmd-copy-btn");
+        if (btn) {
+          var cmd = btn.getAttribute("data-cmd");
+          if (cmd) copyCmd(btn, cmd);
+        }
+      });
+
       function escapeHtml(str) {
         const div = document.createElement("div");
         div.textContent = str;
@@ -1683,10 +1850,15 @@
         } catch (err) {
           tag.className = "";
           tag.textContent = "Error";
+          heroBtn.href = "https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe";
           body.innerHTML = `
           <div class="error-state">
             <p>Unable to load release information. This may be due to GitHub API rate limits.</p>
-            <button class="btn btn-secondary btn-sm" onclick="location.reload()">
+            <a href="https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe" class="btn btn-primary btn-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download FitFetch
+            </a>
+            <button class="btn btn-secondary btn-sm" onclick="location.reload()" style="margin-left:8px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
               Retry
             </button>
