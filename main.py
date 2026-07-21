@@ -6,44 +6,45 @@ FitFetch - FitGirl Repack Link Extractor
 A modern GUI tool for extracting direct download links from FitGirl repack pages.
 """
 
-import sys
-import re
-import os
 import asyncio
 import logging
+import os
+import re
+import sys
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QDesktopServices, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
-    QCheckBox,
-    QTextEdit,
-    QProgressBar,
-    QScrollArea,
-    QGroupBox,
+    QMainWindow,
     QMessageBox,
-    QStyleFactory,
-    QSplitter,
-    QFileDialog,
-    QToolBar,
-    QDialog,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
     QSpinBox,
-    QFormLayout,
-    QDialogButtonBox,
+    QSplitter,
     QStackedWidget,
+    QStyleFactory,
+    QTextEdit,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QUrl, QTimer
-from PyQt6.QtGui import QFont, QAction, QIcon, QDesktopServices
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -350,6 +351,9 @@ class ZendriverWorker(QThread):
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
+    CF_VERIFY_TIMEOUT = 20
+    CF_VERIFY_CLICK_DELAY = 5
+
     def __init__(
         self,
         links: list[str],
@@ -372,6 +376,37 @@ class ZendriverWorker(QThread):
             if not self._shutdown_requested:
                 logger.exception("ZendriverWorker error")
                 self.error_occurred.emit(f"Zendriver error: {exc}")
+
+    async def _handle_cloudflare(self, tab) -> bool:
+        """Detect and solve Cloudflare challenge using zendriver's built-in functions."""
+        from zendriver.core.cloudflare import (
+            cf_is_interactive_challenge_present,
+            verify_cf,
+        )
+
+        try:
+            self.status_update.emit(
+                "Checking if Cloudflare woke up and chose violence today..."
+            )
+            is_present = await cf_is_interactive_challenge_present(tab, timeout=2)
+            if not is_present:
+                return True
+
+            self.status_update.emit("Cloudflare challenge detected. Solving...")
+            await verify_cf(
+                tab,
+                click_delay=self.CF_VERIFY_CLICK_DELAY,
+                timeout=self.CF_VERIFY_TIMEOUT,
+            )
+            self.status_update.emit("Cloudflare challenge solved.")
+            return True
+
+        except TimeoutError:
+            self.status_update.emit("Cloudflare challenge timed out.")
+            return False
+        except Exception as exc:
+            logger.debug("Cloudflare handling error: %s", exc)
+            return False
 
     async def _async_run(self):
         import zendriver as zd
@@ -398,6 +433,16 @@ class ZendriverWorker(QThread):
             tab = await self.browser.get("https://fuckingfast.co")
             await tab.wait_for_ready_state("complete")
 
+            if not await self._handle_cloudflare(tab):
+                if self._shutdown_requested:
+                    return
+                self.error_occurred.emit(
+                    "Cloudflare verification failed.\n"
+                    "Please try again or use a different browser."
+                )
+                return
+
+            self.status_update.emit("Cloudflare cleared. Starting extraction...")
             for i, link in enumerate(self.links, 1):
                 if self._shutdown_requested:
                     break
@@ -419,11 +464,16 @@ class ZendriverWorker(QThread):
                             f'(async()=>Object.fromEntries((await fetch("/f/{file_id}/go",{{method:"POST"}})).headers.entries()))()',
                             await_promise=True,
                         )
-                        extracted_url = headers["hx-redirect"]
-                        self.link_found.emit(extracted_url + f"#{filename}")
-                        self.status_update.emit(
-                            f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
-                        )
+                        if headers and "hx-redirect" in headers:
+                            extracted_url = headers["hx-redirect"]
+                            self.link_found.emit(extracted_url + f"#{filename}")
+                            self.status_update.emit(
+                                f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            )
+                        else:
+                            self.link_found.emit(
+                                f"FAILED: {filename} - No redirect URL - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            )
                     else:
                         self.link_found.emit(
                             f"FAILED: {filename} - No file ID - (Part: {part_num}) - [{i}/{self.total_links}]"
@@ -474,6 +524,7 @@ class FetchWorker(QThread):
     def run(self):
         try:
             import re as _re
+
             import cloudscraper
             from bs4 import BeautifulSoup
 
@@ -1683,6 +1734,8 @@ class FitFetchApp(QMainWindow):
         self.worker = None
         self.extract_worker = None
         self._fetched_size = ""
+        self._fetch_start_time = 0
+        self._extract_start_time = 0
 
         # Delay settings (defaults)
         self.v1_delay = 0  # milliseconds
@@ -2865,6 +2918,8 @@ class FitFetchApp(QMainWindow):
             checkbox.setChecked(True)
 
         status = f"Found {len(links)} parts"
+        elapsed = time.time() - self._fetch_start_time
+        status += f" ({elapsed:.1f}s)"
         if self._fetched_size:
             status += f" ({self._fetched_size})"
         self.update_status(status)
@@ -2912,6 +2967,7 @@ class FitFetchApp(QMainWindow):
         self.output_text.clear()
         self.progress_bar.setValue(0)
         self.link_count.setText("0 extracted")
+        self._fetch_start_time = time.time()
 
         self.worker = FetchWorker(url, parent=self)
         self.worker.status_update.connect(self.update_status)
@@ -2949,6 +3005,7 @@ class FitFetchApp(QMainWindow):
         self.fetch_btn.setEnabled(False)
         self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
+        self._extract_start_time = time.time()
 
         if method == "v1":
             self.extract_worker = CloudflareWorker(
@@ -3009,7 +3066,8 @@ class FitFetchApp(QMainWindow):
         self.extract_v2_btn.setEnabled(True)
         self.update_link_count()
         count = self.link_count.text()
-        self.update_status(f"Extraction complete ({count})")
+        elapsed = time.time() - self._extract_start_time
+        self.update_status(f"Extraction complete ({count}) ({elapsed:.1f}s)")
 
     def save_links(self):
         text = self.output_text.toPlainText().strip()
