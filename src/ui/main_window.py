@@ -57,6 +57,7 @@ from .dialogs import (
     VersionDialog,
 )
 from .explorer_widget import FitGirlExplorerWidget
+from .file_selection_dialog import FileSelectionDialog
 from .styles import ModernStyle
 from .toolbar import create_toolbar
 from .widgets import ClickableCheckBox
@@ -258,8 +259,14 @@ class FitFetchApp(QMainWindow):
         self.deselect_all_btn.clicked.connect(self.deselect_all)
         self.deselect_all_btn.setFixedHeight(28)
 
+        self.custom_select_btn = QPushButton("Custom Select Files")
+        self.custom_select_btn.clicked.connect(self.open_file_selection)
+        self.custom_select_btn.setFixedHeight(28)
+        self.custom_select_btn.setEnabled(False)
+
         control_layout.addWidget(self.select_all_btn)
         control_layout.addWidget(self.deselect_all_btn)
+        control_layout.addWidget(self.custom_select_btn)
         control_layout.addStretch()
 
         # Browser combo
@@ -546,6 +553,24 @@ class FitFetchApp(QMainWindow):
             active_path = BrowserDetector.detect_default_browser()
         BrowserSettingsDialog(detected, selected, active_path, self).exec()
 
+    def open_file_selection(self) -> None:
+        """Open the advanced file selection dialog and apply the chosen
+        selection back to the parts checkboxes."""
+        if not self.links:
+            return
+        dialog = FileSelectionDialog(
+            self.links,
+            initial_state=getattr(self, "_file_select_state", None),
+            parent=self,
+        )
+        if dialog.exec():
+            selected_urls = set(dialog.get_selected_links())
+            for checkbox, link in self.checkbox_links.items():
+                checkbox.setChecked(link in selected_urls)
+            self.update_parts_count()
+            # persist selection for next open
+            self._file_select_state = dialog.get_selection_state()
+
     def check_for_updates(self) -> None:
         self.statusBar().showMessage("Checking for updates...", 5000)
         self._update_manager.check_for_updates(silent=False)
@@ -644,6 +669,7 @@ class FitFetchApp(QMainWindow):
         self.checkboxes.clear()
         self.checkbox_links.clear()
         self.checkbox_widgets.clear()
+        self.custom_select_btn.setEnabled(False)
         self.parts_count.setText("0 found")
 
     def populate_checkboxes(self, links: list[str]) -> None:
@@ -732,6 +758,7 @@ class FitFetchApp(QMainWindow):
         self.parts_count.setText(f"{len(links)} found")
         self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
+        self.custom_select_btn.setEnabled(True)
 
     def on_checkbox_changed(self, link: str, state: int) -> None:
         self.update_parts_count()
@@ -768,6 +795,16 @@ class FitFetchApp(QMainWindow):
         url = self.url_input.text().strip()
         if not url:
             QMessageBox.critical(self, "Error", "Please enter a valid URL")
+            return
+
+        # If input doesn't look like a URL, search in the explorer instead
+        if not url.lower().startswith(("http://", "https://")):
+            self._explorer_widget.search_input.setText(url)
+            self._switch_page(1)
+            self._explorer_widget._on_search()
+            self.statusBar().showMessage(
+                f"Searching FitGirl for \"{url}\"...", 3000
+            )
             return
 
         self.fetch_btn.setEnabled(False)

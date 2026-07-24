@@ -288,7 +288,6 @@ class ModernStyle:
                 color: white;
                 font-weight: 600;
                 padding: 8px 18px;
-                text-shadow: 0 1px 2px rgba(0,0,0,0.15);
             }}
             QPushButton[primary="true"]:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
