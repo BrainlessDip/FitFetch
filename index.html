@@ -14,11 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link
-      rel="icon"
-      type="image/x-icon"
-      href="https://raw.githubusercontent.com/BrainlessDip/FitFetch/refs/heads/master/favicon.ico"
-    />
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
     <style>
       *,
       *::before,
@@ -155,42 +151,93 @@
         gap: 6px;
       }
 
-      .nav-mobile-toggle {
-        display: none;
-        background: none;
-        border: none;
-        color: var(--text-primary);
-        cursor: pointer;
-        padding: 8px;
-        border-radius: 8px;
-      }
-
-      .nav-mobile-toggle:hover {
-        background: var(--bg-card-hover);
-      }
-
       /* Hero */
       .hero {
         padding: 160px 0 100px;
         text-align: center;
         position: relative;
+        overflow: hidden;
       }
 
-      .hero::before {
-        content: "";
+      .hero-bg {
         position: absolute;
-        top: -200px;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        overflow: hidden;
+      }
+
+      .hero-bg-inner {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+      }
+
+      .hero-screenshot {
+        position: absolute;
+        width: min(750px, 42vw);
+        border-radius: 16px;
+        box-shadow:
+          0 0 60px rgba(79, 70, 229, 0.2),
+          0 20px 60px rgba(0, 0, 0, 0.5);
+        transform-origin: center center;
+        opacity: 0.55;
+        filter: blur(1px) saturate(1.05);
+        transition: opacity 0.8s ease;
+        -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
+        mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
+      }
+
+      .hero-screenshot.extractor {
+        top: 46%;
+        right: 0%;
+        width: min(750px, 44vw);
+        transform: translateY(-50%) perspective(1200px) rotateX(4deg) rotateY(-5deg) scale(0.92);
+      }
+
+      .hero-screenshot.explorer {
+        z-index: 1;
+        top: 48%;
+        left: -1%;
+        width: min(700px, 40vw);
+        transform: translateY(-50%) perspective(1200px) rotateX(3deg) rotateY(4deg) scale(0.88);
+        opacity: 0.55;
+        filter: blur(1px) saturate(1.05);
+      }
+
+      .hero-glow {
+        position: absolute;
+        top: 50%;
         left: 50%;
-        transform: translateX(-50%);
         width: 800px;
-        height: 600px;
-        background: radial-gradient(
-          ellipse,
-          var(--accent-glow) 0%,
-          transparent 70%
-        );
+        height: 800px;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
         opacity: 0.4;
         pointer-events: none;
+      }
+
+      .hero-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background: linear-gradient(
+          to bottom,
+          rgba(10, 10, 11, 0.1) 0%,
+          rgba(10, 10, 11, 0.25) 30%,
+          rgba(10, 10, 11, 0.6) 60%,
+          var(--bg-primary) 100%
+        );
+      }
+
+      .hero .container {
+        position: relative;
+        z-index: 2;
+      }
+
+      .hero-mobile-screenshot {
+        display: none;
       }
 
       .hero h1 {
@@ -281,9 +328,15 @@
         border-radius: 50%;
       }
 
-      .cmd-dot.red { background: #ff5f56; }
-      .cmd-dot.yellow { background: #ffbd2e; }
-      .cmd-dot.green { background: #27c93f; }
+      .cmd-dot.red {
+        background: #ff5f56;
+      }
+      .cmd-dot.yellow {
+        background: #ffbd2e;
+      }
+      .cmd-dot.green {
+        background: #27c93f;
+      }
 
       .cmd-body {
         display: flex;
@@ -893,69 +946,75 @@
       }
 
       /* Mobile Nav */
-      .mobile-menu {
+      .nav-mobile-toggle {
         display: none;
+        background: none;
+        border: none;
+        color: var(--text-primary);
+        cursor: pointer;
+        padding: 10px;
+        border-radius: 8px;
+        min-width: 44px;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .nav-mobile-toggle:hover {
+        background: var(--bg-card-hover);
+      }
+
+      .mobile-menu {
         position: fixed;
         top: 64px;
         left: 0;
         right: 0;
-        background: rgba(10, 10, 11, 0.95);
+        background: rgba(10, 10, 11, 0.98);
         backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
         border-bottom: 1px solid var(--border-color);
-        padding: 16px 24px;
+        padding: 8px 16px;
         z-index: 99;
+        transform: translateY(-8px);
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          transform 0.25s ease,
+          opacity 0.25s ease,
+          visibility 0.25s ease;
       }
 
       .mobile-menu.open {
-        display: block;
+        transform: translateY(0);
+        opacity: 1;
+        visibility: visible;
       }
 
       .mobile-menu a {
         display: block;
-        padding: 12px 16px;
-        font-size: 0.9rem;
+        padding: 14px 16px;
+        font-size: 1rem;
         font-weight: 500;
         color: var(--text-secondary);
-        border-radius: 8px;
+        border-radius: 10px;
         transition: all var(--transition);
+        -webkit-tap-highlight-color: transparent;
       }
 
-      .mobile-menu a:hover {
+      .mobile-menu a:hover,
+      .mobile-menu a:active {
         color: var(--text-primary);
         background: var(--bg-card-hover);
       }
 
       /* Responsive */
-      @media (max-width: 1024px) {
-        .features-grid {
-          grid-template-columns: repeat(2, 1fr);
+      @media (max-width: 1100px) {
+        .nav-links li:not(:last-child) {
+          display: none;
         }
 
-        .release-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .install-grid {
-          grid-template-columns: repeat(3, 1fr);
-        }
-      }
-
-      @media (max-width: 900px) {
-        .features-grid,
-        .install-grid {
-          grid-template-columns: repeat(2, 1fr);
-        }
-
-        .release-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .section-title {
-          font-size: 1.75rem;
-        }
-
-        .section-subtitle {
-          font-size: 0.95rem;
+        .nav-mobile-toggle {
+          display: flex;
         }
       }
 
@@ -968,17 +1027,49 @@
           display: flex;
         }
 
+        nav {
+          height: 56px;
+          padding: 0 16px;
+        }
+
+        .nav-brand {
+          font-size: 1.05rem;
+          gap: 8px;
+        }
+
+        .nav-brand img {
+          width: 24px;
+          height: 24px;
+        }
+
         .hero {
-          padding: 120px 0 60px;
+          padding: 100px 0 50px;
         }
 
         .hero h1 {
-          font-size: 2.2rem;
+          font-size: 2rem;
         }
 
         .hero-tagline {
           font-size: 1rem;
           max-width: 100%;
+          margin-bottom: 28px;
+        }
+
+        .hero-bg {
+          opacity: 0.15;
+        }
+
+        .hero-commands {
+          margin-top: 28px;
+        }
+
+        .hero-mobile-screenshot {
+          display: none;
+        }
+
+        .release-grid {
+          grid-template-columns: 1fr;
         }
 
         section {
@@ -988,12 +1079,23 @@
         .features-grid,
         .install-grid {
           grid-template-columns: repeat(2, 1fr);
-          gap: 16px;
+          gap: 14px;
         }
 
         .feature-card,
         .install-card {
           padding: 24px;
+        }
+
+        .feature-icon {
+          width: 40px;
+          height: 40px;
+          margin-bottom: 16px;
+        }
+
+        .feature-icon svg {
+          width: 20px;
+          height: 20px;
         }
 
         .card-body {
@@ -1021,16 +1123,80 @@
         }
 
         .hero {
-          padding: 100px 0 50px;
+          padding: 90px 0 40px;
         }
 
         .hero h1 {
-          font-size: 1.85rem;
+          font-size: 1.75rem;
+          margin-bottom: 14px;
         }
 
         .hero-tagline {
-          font-size: 0.95rem;
-          margin-bottom: 32px;
+          font-size: 0.92rem;
+          margin-bottom: 24px;
+          line-height: 1.6;
+        }
+
+        .hero-buttons {
+          flex-direction: column;
+          width: 100%;
+          gap: 10px;
+        }
+
+        .hero-buttons .btn {
+          width: 100%;
+          justify-content: center;
+          padding: 14px 20px;
+          font-size: 0.88rem;
+        }
+
+        .hero-commands {
+          margin-top: 24px;
+          gap: 10px;
+        }
+
+        .hero-commands-label {
+          font-size: 0.7rem;
+        }
+
+        .cmd-card {
+          max-width: 100%;
+        }
+
+        .cmd-header {
+          padding: 8px 12px;
+          font-size: 0.7rem;
+        }
+
+        .cmd-dot {
+          width: 8px;
+          height: 8px;
+        }
+
+        .cmd-body {
+          padding: 10px 12px;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .cmd-body code {
+          font-size: 0.75rem;
+          min-width: 0;
+          flex: 1;
+        }
+
+        .cmd-copy-btn {
+          padding: 6px 8px;
+          font-size: 0.7rem;
+        }
+
+        .hero-bg {
+          display: none;
+        }
+
+        .hero-tagline {
+          font-size: 0.92rem;
+          margin-bottom: 24px;
         }
 
         .features-grid,
@@ -1044,17 +1210,62 @@
           padding: 20px;
         }
 
+        .feature-card h3 {
+          font-size: 0.95rem;
+        }
+
+        .feature-card p {
+          font-size: 0.82rem;
+        }
+
         .section-header {
-          margin-bottom: 32px;
+          margin-bottom: 28px;
         }
 
         .section-title {
-          font-size: 1.5rem;
+          font-size: 1.4rem;
+        }
+
+        .section-subtitle {
+          font-size: 0.88rem;
+        }
+
+        .section-label {
+          font-size: 0.7rem;
+          margin-bottom: 8px;
+        }
+
+        .release-grid {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+
+        .card-header {
+          padding: 14px 16px;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .card-header h2 {
+          font-size: 0.95rem;
+        }
+
+        .card-header h2 svg {
+          width: 16px;
+          height: 16px;
+        }
+
+        .card-body {
+          padding: 16px;
+        }
+
+        .release-notes-content {
+          word-break: break-word;
         }
 
         .release-meta {
           flex-direction: column;
-          gap: 12px;
+          gap: 10px;
         }
 
         .meta-item {
@@ -1063,25 +1274,29 @@
           align-items: center;
         }
 
-        .hero-buttons {
-          flex-direction: column;
-          width: 100%;
-          gap: 12px;
+        .meta-value {
+          font-size: 0.85rem;
         }
 
-        .hero-buttons .btn {
-          width: 100%;
-          justify-content: center;
+        .release-notes-content {
+          padding: 12px;
+          font-size: 0.8rem;
+          max-height: 200px;
         }
 
         .asset-item {
           flex-direction: column;
           align-items: flex-start;
           gap: 10px;
+          padding: 10px 12px;
         }
 
         .asset-item .btn {
           align-self: flex-end;
+        }
+
+        .asset-name {
+          font-size: 0.8rem;
         }
 
         .release-actions {
@@ -1093,42 +1308,170 @@
           justify-content: center;
         }
 
-        .install-step {
-          width: 40px;
-          height: 40px;
-          font-size: 1rem;
+        .stats-grid {
+          gap: 12px;
         }
 
-        .install-card h3 {
-          font-size: 0.95rem;
+        .stat-item {
+          padding: 10px 0;
         }
 
-        .install-card p {
+        .stat-label {
           font-size: 0.8rem;
         }
 
+        .stat-value {
+          font-size: 0.88rem;
+        }
+
+        .install-step {
+          width: 38px;
+          height: 38px;
+          font-size: 0.95rem;
+          margin-bottom: 14px;
+        }
+
+        .install-card h3 {
+          font-size: 0.92rem;
+        }
+
+        .install-card p {
+          font-size: 0.78rem;
+        }
+
         footer {
-          padding: 30px 0;
+          padding: 28px 0;
         }
 
         .footer-links {
-          gap: 16px;
+          gap: 14px;
+        }
+
+        .footer-left {
+          gap: 10px;
         }
       }
 
-      @media (max-width: 380px) {
-        .hero h1 {
-          font-size: 1.6rem;
+      @media (max-width: 400px) {
+        nav {
+          height: 52px;
+          padding: 0 12px;
         }
 
-        .btn {
-          padding: 10px 18px;
+        .nav-brand {
+          font-size: 0.95rem;
+          gap: 6px;
+        }
+
+        .nav-brand img {
+          width: 22px;
+          height: 22px;
+        }
+
+        .nav-mobile-toggle {
+          padding: 8px;
+          min-width: 40px;
+          min-height: 40px;
+        }
+
+        .mobile-menu {
+          top: 52px;
+          padding: 4px 12px;
+        }
+
+        .mobile-menu a {
+          padding: 12px 14px;
+          font-size: 0.92rem;
+        }
+
+        .hero {
+          padding: 78px 0 36px;
+        }
+
+        .hero h1 {
+          font-size: 1.55rem;
+        }
+
+        .hero-tagline {
+          font-size: 0.85rem;
+          margin-bottom: 20px;
+        }
+
+        .hero-buttons .btn {
+          padding: 12px 16px;
           font-size: 0.82rem;
         }
 
+        .cmd-body code {
+          font-size: 0.7rem;
+        }
+
+        .hero-mobile-screenshot {
+          width: 98%;
+          max-width: 340px;
+          margin: 20px auto 0;
+          border-radius: 8px;
+        }
+
+        .btn {
+          padding: 10px 16px;
+          font-size: 0.8rem;
+        }
+
         .btn-sm {
-          padding: 8px 14px;
-          font-size: 0.78rem;
+          padding: 7px 12px;
+          font-size: 0.75rem;
+        }
+
+        .section-title {
+          font-size: 1.25rem;
+        }
+
+        .feature-card,
+        .install-card {
+          padding: 16px;
+        }
+
+        .release-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .card-header {
+          padding: 12px 14px;
+        }
+
+        .card-header h2 {
+          font-size: 0.9rem;
+        }
+
+        .card-body {
+          padding: 12px;
+        }
+
+        .release-notes-content {
+          padding: 10px;
+          font-size: 0.75rem;
+          max-height: 160px;
+        }
+
+        .asset-item {
+          padding: 8px 10px;
+        }
+
+        .asset-name {
+          font-size: 0.75rem;
+        }
+
+        .meta-value {
+          font-size: 0.8rem;
+        }
+
+        .stat-label {
+          font-size: 0.75rem;
+        }
+
+        .stat-value {
+          font-size: 0.82rem;
         }
       }
     </style>
@@ -1137,12 +1480,7 @@
     <header>
       <nav>
         <a href="#" class="nav-brand">
-          <img
-            src="https://raw.githubusercontent.com/BrainlessDip/FitFetch/refs/heads/master/favicon.ico"
-            alt="FitFetch"
-            width="28"
-            height="28"
-          />
+          <img src="assets/favicon.ico" alt="FitFetch" width="28" height="28" />
           FitFetch
         </a>
         <ul class="nav-links">
@@ -1171,10 +1509,9 @@
         </ul>
         <button
           class="nav-mobile-toggle"
-          onclick="
-            document.getElementById('mobileMenu').classList.toggle('open')
-          "
+          id="menuToggle"
           aria-label="Toggle menu"
+          aria-expanded="false"
         >
           <svg
             width="24"
@@ -1184,6 +1521,7 @@
             stroke="currentColor"
             stroke-width="2"
             stroke-linecap="round"
+            id="menuIcon"
           >
             <line x1="3" y1="6" x2="21" y2="6" />
             <line x1="3" y1="12" x2="21" y2="12" />
@@ -1192,42 +1530,44 @@
         </button>
       </nav>
       <div class="mobile-menu" id="mobileMenu">
-        <a
-          href="#features"
-          onclick="
-            document.getElementById('mobileMenu').classList.remove('open')
-          "
-          >Features</a
-        >
-        <a
-          href="#release"
-          onclick="
-            document.getElementById('mobileMenu').classList.remove('open')
-          "
-          >Release</a
-        >
-        <a
-          href="#install"
-          onclick="
-            document.getElementById('mobileMenu').classList.remove('open')
-          "
-          >Install</a
-        >
-        <a href="https://github.com/BrainlessDip/fitfetch" target="_blank"
-          >GitHub</a
-        >
+        <a href="#features">Features</a>
+        <a href="#release">Release</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/BrainlessDip/fitfetch" target="_blank">GitHub</a>
       </div>
     </header>
 
     <main>
       <section class="hero">
+        <div class="hero-bg">
+          <div class="hero-bg-inner">
+            <div class="hero-glow"></div>
+            <img
+              src="assets/screenshot_extractor.png"
+              alt=""
+              class="hero-screenshot extractor"
+              loading="eager"
+            />
+            <img
+              src="assets/screenshot_explorer.png"
+              alt=""
+              class="hero-screenshot explorer"
+              loading="eager"
+            />
+          </div>
+          <div class="hero-overlay"></div>
+        </div>
         <div class="container">
           <h1><span>FitFetch</span></h1>
           <p class="hero-tagline">
             Extract direct download links from FitGirl Repacks in seconds.
           </p>
           <div class="hero-buttons">
-            <a href="https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe" class="btn btn-primary" id="heroDownloadBtn">
+            <a
+              href="https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe"
+              class="btn btn-primary"
+              id="heroDownloadBtn"
+            >
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -1261,7 +1601,9 @@
             </a>
           </div>
           <div class="hero-commands">
-            <span class="hero-commands-label">Quick Install via PowerShell</span>
+            <span class="hero-commands-label"
+              >Quick Install via PowerShell</span
+            >
             <div class="cmd-card">
               <div class="cmd-header">
                 <span>Portable (recommended)</span>
@@ -1272,9 +1614,32 @@
                 </div>
               </div>
               <div class="cmd-body">
-                <code><span class="cmd-prompt">PS&gt;</span><span class="cmd-text">irm "https://fitfetch.pages.dev/installers/Portable.ps1" | iex</span></code>
-                <button class="cmd-copy-btn" data-cmd='irm "https://fitfetch.pages.dev/installers/Portable.ps1" | iex'>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                <code
+                  ><span class="cmd-prompt">PS&gt;</span
+                  ><span class="cmd-text"
+                    >irm "https://fitfetch.pages.dev/installers/Portable.ps1" |
+                    iex</span
+                  ></code
+                >
+                <button
+                  class="cmd-copy-btn"
+                  data-cmd='irm "https://fitfetch.pages.dev/installers/Portable.ps1" | iex'
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    width="14"
+                    height="14"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path
+                      d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"
+                    />
+                  </svg>
                   Copy
                 </button>
               </div>
@@ -1289,14 +1654,43 @@
                 </div>
               </div>
               <div class="cmd-body">
-                <code><span class="cmd-prompt">PS&gt;</span><span class="cmd-text">irm "https://fitfetch.pages.dev/installers/Setup.ps1" | iex</span></code>
-                <button class="cmd-copy-btn" data-cmd='irm "https://fitfetch.pages.dev/installers/Setup.ps1" | iex'>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                <code
+                  ><span class="cmd-prompt">PS&gt;</span
+                  ><span class="cmd-text"
+                    >irm "https://fitfetch.pages.dev/installers/Setup.ps1" |
+                    iex</span
+                  ></code
+                >
+                <button
+                  class="cmd-copy-btn"
+                  data-cmd='irm "https://fitfetch.pages.dev/installers/Setup.ps1" | iex'
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    width="14"
+                    height="14"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path
+                      d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"
+                    />
+                  </svg>
                   Copy
                 </button>
               </div>
             </div>
           </div>
+          <img
+            src="assets/screenshot_extractor.png"
+            alt="FitFetch App Screenshot"
+            class="hero-mobile-screenshot"
+            loading="lazy"
+          />
         </div>
       </section>
 
@@ -1404,14 +1798,17 @@
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 >
-                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                  <path
+                    d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"
+                  />
                   <line x1="12" y1="11" x2="12" y2="17" />
                   <line x1="9" y1="14" x2="15" y2="14" />
                 </svg>
               </div>
               <h3>Built-in Repack Explorer</h3>
               <p>
-                Browse and search FitGirl repacks directly within the app — find your games faster with the integrated explorer.
+                Browse and search FitGirl repacks directly within the app — find
+                your games faster with the integrated explorer.
               </p>
             </div>
             <div class="feature-card fade-in">
@@ -1579,7 +1976,7 @@
           <div class="footer-left">
             <span class="footer-brand">
               <img
-                src="https://raw.githubusercontent.com/BrainlessDip/FitFetch/refs/heads/master/favicon.ico"
+                src="assets/favicon.ico"
                 alt="FitFetch"
                 width="20"
                 height="20"
@@ -1599,7 +1996,17 @@
           </div>
           <div class="footer-right">
             <span id="footerYear"></span> FitFetch &middot; Made with
-            &#10084;&#65039; by <a href="https://github.com/BrainlessDip" target="_blank" style="color:var(--text-secondary);text-decoration:underline;text-underline-offset:2px;">BrainlessDip</a>
+            &#10084;&#65039; by
+            <a
+              href="https://github.com/BrainlessDip"
+              target="_blank"
+              style="
+                color: var(--text-secondary);
+                text-decoration: underline;
+                text-underline-offset: 2px;
+              "
+              >BrainlessDip</a
+            >
           </div>
         </div>
       </div>
@@ -1850,7 +2257,8 @@
         } catch (err) {
           tag.className = "";
           tag.textContent = "Error";
-          heroBtn.href = "https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe";
+          heroBtn.href =
+            "https://github.com/brainlessDip/FitFetch/releases/latest/download/FitFetch_Installer.exe";
           body.innerHTML = `
           <div class="error-state">
             <p>Unable to load release information. This may be due to GitHub API rate limits.</p>
@@ -1923,6 +2331,35 @@
 
       loadRelease();
       loadStats();
+
+      var menuToggle = document.getElementById('menuToggle');
+      var mobileMenu = document.getElementById('mobileMenu');
+      var menuIcon = document.getElementById('menuIcon');
+
+      function toggleMenu(open) {
+        var isOpen = open !== undefined ? open : !mobileMenu.classList.contains('open');
+        mobileMenu.classList.toggle('open', isOpen);
+        menuToggle.setAttribute('aria-expanded', isOpen);
+        menuIcon.innerHTML = isOpen
+          ? '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
+          : '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>';
+      }
+
+      menuToggle.addEventListener('click', function () {
+        toggleMenu();
+      });
+
+      mobileMenu.querySelectorAll('a').forEach(function (link) {
+        link.addEventListener('click', function () {
+          toggleMenu(false);
+        });
+      });
+
+      document.addEventListener('click', function (e) {
+        if (!e.target.closest('header')) {
+          toggleMenu(false);
+        }
+      });
     </script>
   </body>
 </html>
