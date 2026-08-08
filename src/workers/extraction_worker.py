@@ -168,7 +168,7 @@ class ZendriverWorker(QThread):
                 self.error_occurred.emit(f"Zendriver error: {exc}")
 
     async def _async_run(self) -> None:
-        from ..browser.zendriver_client import ZendriverClient
+        from ..browser.zendriver_client import ZendriverClient, resolve_direct_url
 
         client = ZendriverClient()
         self._client = client
@@ -195,8 +195,6 @@ class ZendriverWorker(QThread):
                     break
 
                 filename = extract_filename(link)
-                file_id_m = RE_FILE_ID.search(link)
-                file_id = file_id_m.group(1) if file_id_m else None
                 part_num = extract_part_num(filename)
                 self.status_update.emit(
                     f"[{i}/{self.total_links}] Processing {filename} - (Part: {part_num})"
@@ -206,20 +204,16 @@ class ZendriverWorker(QThread):
                     self.status_update.emit(
                         f"Extracting from {filename}... - (Part: {part_num}) - [{i}/{self.total_links}]"
                     )
-                    if file_id:
-                        extracted_url = await client.extract_link(tab, file_id)
-                        if extracted_url:
-                            self.link_found.emit(extracted_url + f"#{filename}")
-                            self.status_update.emit(
-                                f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
-                            )
-                        else:
-                            self.link_found.emit(
-                                f"FAILED: {filename} - No redirect URL - (Part: {part_num}) - [{i}/{self.total_links}]"
-                            )
-                    else:
+                    download_url, cf_clearance, err = await resolve_direct_url(tab, link)
+                    if not download_url:
+                        error_msg = err or "No HX-Redirect received"
                         self.link_found.emit(
-                            f"FAILED: {filename} - No file ID - (Part: {part_num}) - [{i}/{self.total_links}]"
+                            f"FAILED: {filename} - {error_msg} - (Part: {part_num}) - [{i}/{self.total_links}]"
+                        )
+                    else:
+                        self.link_found.emit(download_url + f"#{filename}")
+                        self.status_update.emit(
+                            f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
                         )
                 except Exception as exc:
                     logger.debug(
