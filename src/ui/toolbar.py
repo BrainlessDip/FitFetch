@@ -32,10 +32,6 @@ def create_toolbar(window: FitFetchApp) -> QToolBar:
     extractor_btn.triggered.connect(lambda: window._switch_page(0))
     toolbar.addAction(extractor_btn)
 
-    extract_v1_btn = QAction("Extract V1", window)
-    extract_v1_btn.triggered.connect(lambda: window.start_extraction(method="v1"))
-    toolbar.addAction(extract_v1_btn)
-
     extract_v2_btn = QAction("Extract V2", window)
     extract_v2_btn.triggered.connect(lambda: window.start_extraction(method="v2"))
     toolbar.addAction(extract_v2_btn)

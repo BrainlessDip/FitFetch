@@ -8,8 +8,8 @@ import sys
 import time
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QAction, QDesktopServices, QFont
+from PyQt6.QtCore import Qt, QEvent, QObject, QTimer, QUrl
+from PyQt6.QtGui import QAction, QCursor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTextEdit,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -86,6 +87,14 @@ class FitFetchApp(QMainWindow):
         self._extract_start_time = 0.0
         self._selected_browser: str | None = self._config.selected_browser
         self._startup_update_shown = False
+
+        # V2 session state (successful direct links / failed links)
+        self.successful_links: list[str] = []
+        self.successful_links_set: set[str] = set()
+        self.error_links: list[str] = []
+        self.error_links_set: set[str] = set()
+        self._output_shown: set[str] = set()
+        self._retry_snapshot: list[str] | None = None
 
         # Update manager
         self._update_manager = UpdateManager(self)
@@ -177,7 +186,9 @@ class FitFetchApp(QMainWindow):
         url_layout.setSpacing(8)
 
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Enter FitGirl repack URL...")
+        self.url_input.setPlaceholderText(
+            "Enter a FitGirl Repack URL or search for a game title..."
+        )
         self.url_input.returnPressed.connect(self.start_fetch)
 
         self.paste_btn = QPushButton("Paste")
@@ -237,9 +248,7 @@ class FitFetchApp(QMainWindow):
         )
 
         self.scroll_widget = QWidget()
-        self.scroll_widget.setStyleSheet(
-            f"background-color: {ModernStyle.BG_PRIMARY};"
-        )
+        self.scroll_widget.setStyleSheet(f"background-color: {ModernStyle.BG_PRIMARY};")
         self.scroll_layout = QVBoxLayout(self.scroll_widget)
         self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll_layout.setSpacing(2)
@@ -296,16 +305,6 @@ class FitFetchApp(QMainWindow):
         self.browser_combo.currentIndexChanged.connect(self._on_browser_changed)
         control_layout.addWidget(self.browser_combo)
 
-        self.extract_v1_btn = QPushButton("Extract V1")
-        self.extract_v1_btn.clicked.connect(lambda: self.start_extraction(method="v1"))
-        self.extract_v1_btn.setEnabled(False)
-        self.extract_v1_btn.setFixedHeight(32)
-        self.extract_v1_btn.setFixedWidth(110)
-        self.extract_v1_btn.setStyleSheet(
-            self.extract_v1_btn.styleSheet()
-            + "QPushButton { padding-left: 14px; padding-right: 14px; }"
-        )
-
         self.extract_v2_btn = QPushButton("Extract V2")
         self.extract_v2_btn.clicked.connect(lambda: self.start_extraction(method="v2"))
         self.extract_v2_btn.setEnabled(False)
@@ -316,7 +315,6 @@ class FitFetchApp(QMainWindow):
             + "QPushButton { padding-left: 14px; padding-right: 14px; }"
         )
 
-        control_layout.addWidget(self.extract_v1_btn)
         control_layout.addWidget(self.extract_v2_btn)
         parts_layout.addLayout(control_layout)
 
@@ -354,14 +352,63 @@ class FitFetchApp(QMainWindow):
         self.copy_btn.clicked.connect(self.copy_output)
         self.copy_btn.setFixedHeight(28)
 
+        self.copy_links_btn = QPushButton("Copy (0 Links)")
+        self.copy_links_btn.clicked.connect(self.copy_successful_links)
+        self.copy_links_btn.setFixedHeight(28)
+        self.copy_links_btn.setEnabled(False)
+        self.copy_links_btn.setToolTip(
+            "Copy all successfully extracted direct links to the clipboard."
+        )
+
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self.clear_output)
         self.clear_btn.setFixedHeight(28)
 
+        self.copy_links_btn = QPushButton("Copy (0 Links)")
+        self.copy_links_btn.clicked.connect(self.copy_successful_links)
+        self.copy_links_btn.setFixedHeight(28)
+        self.copy_links_btn.setEnabled(False)
+        self.copy_links_btn.setToolTip(
+            "Copy all successfully extracted direct links to the clipboard."
+        )
+
+        self.retry_errors_btn = QPushButton("Re-extract Errors")
+        self.retry_errors_btn.clicked.connect(self.retry_errors)
+        self.retry_errors_btn.setFixedHeight(28)
+        self.retry_errors_btn.setEnabled(False)
+        self.retry_errors_btn.setToolTip(
+            "Re-run extraction only for the links that failed.\n"
+            "Recovered links are added to the successful list."
+        )
+
+        self.errors_label = QLabel("No errors")
+        self.errors_label.setStyleSheet(ModernStyle.muted_label_style())
+        self.errors_label.setToolTip(
+            "Number of links that failed during V2 extraction."
+        )
+
+        self.check_btn = QPushButton("Check")
+        self.check_btn.clicked.connect(self.check_links)
+        self.check_btn.setFixedHeight(28)
+        self.check_btn.setToolTip(
+            "Compare selected links against the successfully extracted "
+            "direct links and report which are still missing."
+        )
+
+        self._hover_tooltips = _DelayedToolTipFilter(delay_ms=3100, parent=self)
+        self.copy_links_btn.installEventFilter(self._hover_tooltips)
+        self.retry_errors_btn.installEventFilter(self._hover_tooltips)
+        self.check_btn.installEventFilter(self._hover_tooltips)
+        self.errors_label.installEventFilter(self._hover_tooltips)
+
         output_control.addStretch()
         output_control.addWidget(self.save_btn)
         output_control.addWidget(self.copy_btn)
+        output_control.addWidget(self.copy_links_btn)
+        output_control.addWidget(self.check_btn)
+        output_control.addWidget(self.retry_errors_btn)
         output_control.addWidget(self.clear_btn)
+        output_control.addWidget(self.errors_label)
         output_layout.addLayout(output_control)
 
         splitter.addWidget(output_widget)
@@ -403,10 +450,6 @@ class FitFetchApp(QMainWindow):
         file_menu.addAction(extractor_action)
 
         file_menu.addSeparator()
-
-        extract_v1_action = QAction("Extract V1 (Cloudflare)", self)
-        extract_v1_action.triggered.connect(lambda: self.start_extraction(method="v1"))
-        file_menu.addAction(extract_v1_action)
 
         extract_v2_action = QAction("Extract V2 (Browser)", self)
         extract_v2_action.triggered.connect(lambda: self.start_extraction(method="v2"))
@@ -506,7 +549,9 @@ class FitFetchApp(QMainWindow):
             return
         if self._is_valid_fitgirl_url(text):
             self.url_input.setText(text)
-            self.statusBar().showMessage("Valid FitGirl URL pasted from clipboard", 3000)
+            self.statusBar().showMessage(
+                "Valid FitGirl URL pasted from clipboard", 3000
+            )
             self.start_fetch()
         else:
             self.statusBar().showMessage(
@@ -684,7 +729,7 @@ class FitFetchApp(QMainWindow):
             try:
                 m = RE_PART_NUM.search(extract_filename(url))
                 return int(m.group(1)) if m else 0
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return 0
 
         sorted_links = sorted(links, key=_sort_key)
@@ -756,7 +801,6 @@ class FitFetchApp(QMainWindow):
             status += f" ({self._fetched_size})"
         self.update_status(status)
         self.parts_count.setText(f"{len(links)} found")
-        self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
         self.custom_select_btn.setEnabled(True)
 
@@ -802,18 +846,16 @@ class FitFetchApp(QMainWindow):
             self._explorer_widget.search_input.setText(url)
             self._switch_page(1)
             self._explorer_widget._on_search()
-            self.statusBar().showMessage(
-                f"Searching FitGirl for \"{url}\"...", 3000
-            )
+            self.statusBar().showMessage(f'Searching FitGirl for "{url}"...', 3000)
             return
 
         self.fetch_btn.setEnabled(False)
-        self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
         self.clear_checkboxes()
         self.output_text.clear()
         self.progress_bar.setValue(0)
         self.link_count.setText("0 extracted")
+        self._reset_v2_session()
         self._fetch_start_time = time.time()
 
         from ..workers.fitgirl_fetch_worker import FitGirlFetchWorker
@@ -854,11 +896,11 @@ class FitFetchApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(selected))
         self.link_count.setText("0 extracted")
+        self._reset_v2_session()
+        self._extract_start_time = time.time()
 
         self.fetch_btn.setEnabled(False)
-        self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
-        self._extract_start_time = time.time()
 
         if method == "v1":
             self.extract_worker = CloudflareWorker(
@@ -869,56 +911,280 @@ class FitFetchApp(QMainWindow):
             )
             self.update_status("Starting V1 extraction (Cloudflare bypass)...")
         else:
-            browser_path = self._browser_manager.get_browser_path()
-            if not browser_path:
-                QMessageBox.critical(
-                    self,
-                    "No Browser Found",
-                    "No Chromium-based browser found on your system.\n\n"
-                    "Please install one of the following browsers:\n"
-                    "- Google Chrome\n"
-                    "- Microsoft Edge\n"
-                    "- Brave Browser\n"
-                    "- Chromium\n\n"
-                    "Then restart the application and try again.",
-                )
+            worker = self._build_v2_worker(selected)
+            if worker is None:
                 self.fetch_btn.setEnabled(True)
-                self.extract_v1_btn.setEnabled(True)
                 self.extract_v2_btn.setEnabled(True)
                 return
-
-            self.extract_worker = ZendriverWorker(
-                selected,
-                delay=self._config.v2_delay,
-                browser_executable_path=browser_path,
-                parent=self,
-            )
+            self.extract_worker = worker
+            browser_path = getattr(worker, "browser_executable_path", "") or ""
             self.update_status(
-                f"Starting V2 extraction (Browser: {os.path.basename(browser_path)})..."
+                f"Starting V2 extraction (Browser: {os.path.basename(browser_path) or 'auto'})..."
             )
 
-        self.extract_worker.status_update.connect(self.update_status)
-        self.extract_worker.progress_update.connect(self.progress_bar.setValue)
-        self.extract_worker.link_found.connect(self.add_output)
-        self.extract_worker.error_occurred.connect(self.on_extract_error)
-        self.extract_worker.extraction_complete.connect(self.on_extraction_complete)
+        self._wire_extract_worker(self.extract_worker, method=method)
         self.extract_worker.start()
 
     def on_extract_error(self, error_msg: str) -> None:
         self.update_status(f"Error: {error_msg}")
         self.fetch_btn.setEnabled(True)
-        self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
         QMessageBox.critical(self, "Error", f"Extraction error:\n{error_msg}")
 
     def on_extraction_complete(self) -> None:
         self.fetch_btn.setEnabled(True)
-        self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
-        self.update_link_count()
-        count = self.link_count.text()
+        self._refresh_v2_ui()
         elapsed = time.time() - self._extract_start_time
+
+        if self._retry_snapshot is not None:
+            snapshot = list(self._retry_snapshot)
+            self._retry_snapshot = None
+            recovered = len(snapshot) - len(self.error_links)
+            remaining = len(self.error_links)
+            self._refresh_v2_ui()
+            if remaining == 0:
+                self.update_status(
+                    f"Re-extract complete: all {recovered} error(s) recovered ({elapsed:.1f}s)"
+                )
+            else:
+                self.update_status(
+                    f"Re-extract complete: {recovered} recovered, "
+                    f"{remaining} error(s) remaining ({elapsed:.1f}s)"
+                )
+            self.statusBar().showMessage(
+                f"Retry done: {recovered} recovered, {remaining} remaining", 5000
+            )
+            return
+
+        self.update_link_count()
+        self._refresh_v2_ui()
+        count = self.link_count.text()
         self.update_status(f"Extraction complete ({count}) ({elapsed:.1f}s)")
+
+    # ------------------------------------------------------------------
+    # V2 session state (successful links / error tracking)
+    # ------------------------------------------------------------------
+
+    def _build_v2_worker(self, links: list[str]) -> ZendriverWorker | None:
+        """Create a V2 (Zendriver) worker for *links*, or None if no browser."""
+        browser_path = self._browser_manager.get_browser_path()
+        if not browser_path:
+            QMessageBox.critical(
+                self,
+                "No Browser Found",
+                "No Chromium-based browser found on your system.\n\n"
+                "Please install one of the following browsers:\n"
+                "- Google Chrome\n"
+                "- Microsoft Edge\n"
+                "- Brave Browser\n"
+                "- Chromium\n\n"
+                "Then restart the application and try again.",
+            )
+            return None
+        return ZendriverWorker(
+            links,
+            delay=self._config.v2_delay,
+            browser_executable_path=browser_path,
+            parent=self,
+        )
+
+    def _wire_extract_worker(self, worker, method: str) -> None:
+        worker.status_update.connect(self.update_status)
+        worker.progress_update.connect(self.progress_bar.setValue)
+        worker.error_occurred.connect(self.on_extract_error)
+        worker.extraction_complete.connect(self.on_extraction_complete)
+        if method == "v1":
+            worker.link_found.connect(self.add_output)
+        else:
+            worker.link_found.connect(self.on_v2_link_found)
+            worker.link_failed.connect(self.on_v2_link_failed)
+
+    def _reset_v2_session(self) -> None:
+        self.successful_links.clear()
+        self.successful_links_set.clear()
+        self.error_links.clear()
+        self.error_links_set.clear()
+        self._output_shown.clear()
+        self._retry_snapshot = None
+        self._refresh_v2_ui()
+
+    def _refresh_v2_ui(self) -> None:
+        n_ok = len(self.successful_links)
+        self.link_count.setText(f"{n_ok} links" if n_ok else "0 extracted")
+        self.copy_links_btn.setText(f"Copy ({n_ok} Links)")
+        self.copy_links_btn.setEnabled(n_ok > 0)
+
+        n_err = len(self.error_links)
+        self.errors_label.setText(
+            f"{n_err} error{'s' if n_err != 1 else ''}" if n_err else "No errors"
+        )
+        self.retry_errors_btn.setEnabled(n_err > 0)
+
+    def on_v2_link_found(self, original_link: str, text: str) -> None:
+        if text not in self.successful_links_set:
+            self.successful_links.append(text)
+            self.successful_links_set.add(text)
+            if text not in self._output_shown:
+                self.output_text.append(text)
+                self._output_shown.add(text)
+        if original_link in self.error_links_set:
+            self.error_links.remove(original_link)
+            self.error_links_set.remove(original_link)
+        self._refresh_v2_ui()
+
+    def on_v2_link_failed(self, original_link: str, error_msg: str) -> None:
+        filename = extract_filename(original_link)
+        part_num = extract_part_num(filename)
+        log_line = (
+            f"FAILED: {filename} - {error_msg} - (Part: {part_num}) - {original_link}"
+        )
+        self.output_text.append(log_line)
+        cursor = self.output_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.output_text.setTextCursor(cursor)
+
+        if original_link not in self.error_links_set:
+            self.error_links.append(original_link)
+            self.error_links_set.add(original_link)
+        self._refresh_v2_ui()
+        logger.debug("V2 extraction failed for %s: %s", filename, error_msg)
+
+    def retry_errors(self) -> None:
+        if self.extract_worker and self.extract_worker.isRunning():
+            return
+        errors = list(self.error_links)
+        if not errors:
+            self.update_status("No failed links to re-extract")
+            return
+
+        worker = self._build_v2_worker(errors)
+        if worker is None:
+            return
+
+        self._retry_snapshot = list(errors)
+        self._extract_start_time = time.time()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMaximum(len(errors))
+        self.fetch_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
+        self.retry_errors_btn.setEnabled(False)
+        self.update_status(f"Re-extracting {len(errors)} failed link(s)...")
+
+        self.extract_worker = worker
+        self._wire_extract_worker(worker, method="v2")
+        worker.start()
+
+    def copy_successful_links(self) -> None:
+        if not self.successful_links:
+            self.update_status("No successful links to copy")
+            self.statusBar().showMessage("No successful links to copy", 3000)
+            return
+        text = "\n".join(self.successful_links)
+        QApplication.clipboard().setText(text)
+        n = len(self.successful_links)
+        self.update_status(f"Copied {n} successful links to clipboard")
+        self.statusBar().showMessage(f"Copied {n} links to clipboard", 3000)
+
+    def _link_part_key(self, url: str) -> str:
+        """Normalized part/file name used for Check matching.
+
+        Uses the same extraction as the stored successful links so both
+        sides are guaranteed to compare identically, and strips any URL
+        encoding / surrounding whitespace.
+        """
+        from urllib.parse import unquote
+
+        return unquote(extract_filename(url)).strip()
+
+    def check_links(self) -> None:
+        """Compare selected links against successfully extracted direct links.
+
+        Matching is done on the part/file name from the URL fragment
+        (``#...``) so URL/token changes do not affect the comparison.
+        """
+        selected = self.get_selected_links()
+        if not selected:
+            QMessageBox.information(self, "Check", "No links selected")
+            return
+
+        extracted_parts = {
+            self._link_part_key(entry) for entry in self.successful_links
+        }
+
+        missing: list[tuple[str, str]] = []
+        extracted_count = 0
+        seen: set[str] = set()
+        for link in selected:
+            part = self._link_part_key(link)
+            if not part or part in seen:
+                continue
+            seen.add(part)
+            if part in extracted_parts:
+                extracted_count += 1
+            else:
+                missing.append((link, part))
+
+        summary = (
+            f"{len(selected)} selected · {extracted_count} extracted · "
+            f"{len(missing)} missing"
+        )
+        self.update_status(summary)
+
+        reextract_btn = None
+        box = QMessageBox(self)
+        box.setWindowTitle("Extraction Check")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(summary)
+
+        if not self.successful_links:
+            box.setInformativeText(
+                "No successfully extracted links recorded yet in this "
+                "session.\nRun a V2 extraction first, then Check again."
+            )
+        elif missing:
+            max_shown = 6
+            shown = missing[:max_shown]
+            lines = "\n".join(
+                f"{i + 1}. {part}" for i, (_, part) in enumerate(shown, 1)
+            )
+            hidden = len(missing) - len(shown)
+            if hidden > 0:
+                lines += f"\n… and {hidden} more (total {len(missing)})"
+            box.setInformativeText(f"Not extracted ({len(missing)}):\n{lines}")
+            reextract_btn = box.addButton(
+                "Re-extract Missing", QMessageBox.ButtonRole.AcceptRole
+            )
+        else:
+            box.setInformativeText("All selected links are already extracted.")
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+
+        if reextract_btn is not None and box.clickedButton() is reextract_btn:
+            missing_links = [link for link, _ in missing]
+            self._extract_v2_links(missing_links, "Re-extracting missing links")
+
+    def _extract_v2_links(self, links: list[str], status_prefix: str) -> None:
+        """Start a V2 extraction for *links* without resetting the session."""
+        if not links:
+            return
+        if self.extract_worker and self.extract_worker.isRunning():
+            return
+        worker = self._build_v2_worker(links)
+        if worker is None:
+            return
+
+        self._extract_start_time = time.time()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMaximum(len(links))
+        self.fetch_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
+        self.retry_errors_btn.setEnabled(False)
+        self.update_status(f"{status_prefix} ({len(links)} link(s))...")
+
+        self.extract_worker = worker
+        self._wire_extract_worker(worker, method="v2")
+        worker.start()
 
     # ------------------------------------------------------------------
     # Save / Copy / Clear
@@ -961,6 +1227,7 @@ class FitFetchApp(QMainWindow):
         self.output_text.clear()
         self.progress_bar.setValue(0)
         self.link_count.setText("0 extracted")
+        self._reset_v2_session()
         self.update_status("Cleared output")
 
     # ------------------------------------------------------------------
@@ -981,6 +1248,48 @@ class FitFetchApp(QMainWindow):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _DelayedToolTipFilter(QObject):
+    """Show a widget's tooltip only after hovering for more than *delay_ms*."""
+
+    def __init__(self, delay_ms: int = 3100, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._delay_ms = max(int(delay_ms), 1500)
+        self._target: QWidget | None = None
+        self._timer: QTimer | None = None
+
+    def eventFilter(self, obj, event) -> bool:
+        etype = event.type()
+        if etype == QEvent.Type.Enter:
+            self._target = obj
+            self._restart()
+        elif etype == QEvent.Type.Leave:
+            self._cancel()
+        elif etype == QEvent.Type.ToolTip:
+            # Suppress Qt's default (fast) tooltip so only the delayed one shows.
+            return True
+        return super().eventFilter(obj, event)
+
+    def _restart(self) -> None:
+        self._cancel()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._show)
+        self._timer.start(self._delay_ms)
+
+    def _cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer.deleteLater()
+            self._timer = None
+        QToolTip.hideText()
+
+    def _show(self) -> None:
+        target = self._target
+        if target is None or not target.toolTip():
+            return
+        QToolTip.showText(QCursor.pos(), target.toolTip(), target)
 
 
 def _make_group(title: str) -> QWidget:

@@ -186,11 +186,15 @@ async def resolve_direct_url(
     post_path = f"/f/{file_id}/go"
     logger.info("[POST] %s", post_path)
 
+    token_expr = "window.turnstileToken||(el&&el.value)"
+    if cf_clearance:
+        token_expr += "||" + repr(cf_clearance)
+
     script = (
         "(async()=>{"
         "try{"
         "const el=document.querySelector('[name=\"cf-turnstile-response\"]');"
-        "const t=window.turnstileToken||(el&&el.value);"
+        f"const t={token_expr};"
         "if(!t){return {error:'no_turnstile_token'}}"
         "const r=await fetch(" + repr(post_path) + ",{"
         "method:'POST',"
@@ -231,7 +235,7 @@ async def resolve_direct_url(
     if status is not None:
         try:
             status = int(status)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             status = None
     logger.info("[STATUS] %s", status)
     if status is None or not (200 <= status < 300):

@@ -140,14 +140,15 @@ class ZendriverWorker(QThread):
 
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
-    link_found = pyqtSignal(str)
+    link_found = pyqtSignal(str, str)
+    link_failed = pyqtSignal(str, str)
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
     def __init__(
         self,
         links: list[str],
-        delay: int = 3,
+        delay: int = 3000,
         browser_executable_path: str | None = None,
         parent=None,
     ) -> None:
@@ -207,11 +208,9 @@ class ZendriverWorker(QThread):
                     download_url, cf_clearance, err = await resolve_direct_url(tab, link)
                     if not download_url:
                         error_msg = err or "No HX-Redirect received"
-                        self.link_found.emit(
-                            f"FAILED: {filename} - {error_msg} - (Part: {part_num}) - [{i}/{self.total_links}]"
-                        )
+                        self.link_failed.emit(link, error_msg)
                     else:
-                        self.link_found.emit(download_url + f"#{filename}")
+                        self.link_found.emit(link, download_url + f"#{filename}")
                         self.status_update.emit(
                             f"Extracted: {filename} - (Part: {part_num}) - [{i}/{self.total_links}]"
                         )
@@ -219,14 +218,12 @@ class ZendriverWorker(QThread):
                     logger.debug(
                         "Zendriver extraction failed for %s: %s", filename, exc
                     )
-                    self.link_found.emit(
-                        f"FAILED: {filename} - {exc} - (Part: {part_num}) - [{i}/{self.total_links}]"
-                    )
+                    self.link_failed.emit(link, str(exc))
 
                 self.progress_update.emit(i)
 
                 if not self._shutdown_requested and i < self.total_links:
-                    await asyncio.sleep(self.delay)
+                    await asyncio.sleep(self.delay / 1000)
 
             self.status_update.emit("Extraction complete (V2)")
             self.extraction_complete.emit()
