@@ -92,7 +92,7 @@ class FitGirlParser:
         if current_el:
             try:
                 pagination.current_page = int(current_el.get_text(strip=True))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         page_links = nav.select("a.page-numbers:not(.next):not(.prev)")
@@ -103,7 +103,7 @@ class FitGirlParser:
                 num = int(text)
                 if num > max_page:
                     max_page = num
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
         pagination.total_pages = max_page
 

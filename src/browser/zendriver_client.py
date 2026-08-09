@@ -14,8 +14,14 @@ from ..logger import logger
 class ZendriverClient:
     """High-level wrapper around the *zendriver* library."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        window_position: tuple[int, int] | None = None,
+        user_data_dir: str | None = None,
+    ) -> None:
         self._browser = None
+        self._window_position = window_position
+        self._user_data_dir = user_data_dir
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -27,6 +33,13 @@ class ZendriverClient:
             "headless": False,
             "browser_args": list(ZENDRIVER_BROWSER_ARGS),
         }
+        if self._user_data_dir:
+            kwargs["browser_args"].append(f"--user-data-dir={self._user_data_dir}")
+        if self._window_position is not None:
+            kwargs["browser_args"].append(
+                f"--window-position="
+                f"{self._window_position[0]},{self._window_position[1]}"
+            )
         if browser_executable_path:
             kwargs["browser_executable_path"] = browser_executable_path
         self._browser = await zd.start(**kwargs)
@@ -149,17 +162,14 @@ async def clear_host_data(tab, url: str) -> None:
     logger.info("[CLEAR] host data cleared for %s", origin)
 
 
-async def resolve_direct_url(
-    tab, link: str
-) -> tuple[str | None, str | None, str | None]:
+async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
     """Resolve the direct download URL for a FuckingFast link.
 
     Opens *link* in the given *tab*, waits for Cloudflare/Turnstile to be
     ready, grabs the Turnstile token, POSTs to ``/f/{file_id}/go`` exactly like
     the site's download button, and reads the ``HX-Redirect`` response header.
-    Also captures the ``cf_clearance`` cookie set by Cloudflare.
 
-    Returns ``(direct_url, cf_clearance, None)`` on success or
+    Returns ``(direct_url, None)`` on success or
     ``(None, None, error)`` on failure.
     """
     file_id_m = RE_FILE_ID.search(link)
@@ -179,16 +189,10 @@ async def resolve_direct_url(
     if not await _solve_cloudflare(tab):
         return None, None, "Turnstile/Cloudflare verification failed"
 
-    cf_clearance = await get_cf_clearance(tab)
-    if cf_clearance:
-        logger.info("[COOKIE] cf_clearance captured")
-
     post_path = f"/f/{file_id}/go"
     logger.info("[POST] %s", post_path)
 
     token_expr = "window.turnstileToken||(el&&el.value)"
-    if cf_clearance:
-        token_expr += "||" + repr(cf_clearance)
 
     script = (
         "(async()=>{"
@@ -246,4 +250,4 @@ async def resolve_direct_url(
         return None, None, "HX-Redirect header missing from response"
 
     logger.info("[HX-REDIRECT] %s", direct_url)
-    return direct_url, cf_clearance, None
+    return direct_url, None

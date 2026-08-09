@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-import re
+import random
 import sys
 import time
 from datetime import datetime
@@ -12,7 +12,6 @@ from PyQt6.QtCore import Qt, QEvent, QObject, QTimer, QUrl
 from PyQt6.QtGui import QAction, QCursor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -38,22 +37,24 @@ from ..constants import (
     APP_NAME,
     CLOSE_WAIT_MS,
     MAX_CF_THREADS,
-    OWNER,
     RE_FITGIRL_URL,
     RE_PART_NUM,
     STARTUP_UPDATE_DELAY_MS,
     VERSION,
+    ZENDRIVER_BROWSER_ARGS,
+    ZENDRIVER_WINDOW_DEFAULT_HEIGHT,
+    ZENDRIVER_WINDOW_DEFAULT_WIDTH,
+    ZENDRIVER_WINDOW_GAP,
 )
 from ..logger import logger
-from ..models.data_models import FitGirlPagination, FitGirlSearchResult
 from ..services.update_service import UpdateManager
 from ..utils import extract_filename, extract_part_num
 from ..workers.extraction_worker import CloudflareWorker, ZendriverWorker
-from ..workers.search_worker import FitGirlSearchWorker
 from .dialogs import (
     AboutDialog,
     BrowserSettingsDialog,
     HelpDialog,
+    MultiWindowSettingsDialog,
     SettingsDialog,
     VersionDialog,
 )
@@ -96,6 +97,12 @@ class FitFetchApp(QMainWindow):
         self._output_shown: set[str] = set()
         self._retry_snapshot: list[str] | None = None
 
+        # V2 multi-window state
+        self._active_v2_workers: list[ZendriverWorker] = []
+        self._window_totals: dict[int, int] = {}
+        self._window_progress: dict[int, int] = {}
+        self._window_done: set[int] = set()
+
         # Update manager
         self._update_manager = UpdateManager(self)
         self._update_manager.update_available.connect(self._on_update_found)
@@ -120,7 +127,7 @@ class FitFetchApp(QMainWindow):
             self.restoreState(state)
 
     def closeEvent(self, event) -> None:
-        if self.extract_worker and self.extract_worker.isRunning():
+        if self._extraction_running():
             reply = QMessageBox.question(
                 self,
                 "Confirm Exit",
@@ -144,6 +151,12 @@ class FitFetchApp(QMainWindow):
             self.extract_worker._shutdown_requested = True
             self.extract_worker.quit()
             self.extract_worker.wait(5000)
+
+        for worker in self._active_v2_workers:
+            worker._shutdown_requested = True
+            worker.quit()
+        for worker in self._active_v2_workers:
+            worker.wait(5000)
 
         self._config.save_window_geometry(self.saveGeometry())
         self._config.save_window_state(self.saveState())
@@ -422,6 +435,17 @@ class FitFetchApp(QMainWindow):
         self.progress_bar.setFixedHeight(20)
         main_layout.addWidget(self.progress_bar)
 
+        self.window_status_label = QLabel("")
+        self.window_status_label.setStyleSheet(f"""
+            QLabel {{
+                color: {ModernStyle.TEXT_SECONDARY};
+                font-size: 11px;
+                padding: 0 2px;
+            }}
+        """)
+        self.window_status_label.hide()
+        main_layout.addWidget(self.window_status_label)
+
         self.statusBar().showMessage("Ready")
 
         # --- Page 1: Explorer ---
@@ -494,6 +518,10 @@ class FitFetchApp(QMainWindow):
         delays_action = QAction("Delays", self)
         delays_action.triggered.connect(self.open_settings)
         settings_menu.addAction(delays_action)
+
+        multi_window_action = QAction("Multi-Window", self)
+        multi_window_action.triggered.connect(self.open_multi_window_settings)
+        settings_menu.addAction(multi_window_action)
 
         browser_action = QAction("Browser", self)
         browser_action.triggered.connect(self.open_browser_settings)
@@ -586,6 +614,21 @@ class FitFetchApp(QMainWindow):
             self.statusBar().showMessage(
                 f"Settings updated: V1 delay={dialog.get_v1_delay()}ms, "
                 f"V2 delay={dialog.get_v2_delay() / 1000}s",
+                3000,
+            )
+
+    def open_multi_window_settings(self) -> None:
+        dialog = MultiWindowSettingsDialog(
+            self._config.window_count,
+            self._config.random_window_positions,
+            self,
+        )
+        if dialog.exec():
+            self._config.window_count = dialog.get_window_count()
+            self._config.random_window_positions = dialog.get_random_positions()
+            self.statusBar().showMessage(
+                f"Multi-Window settings updated: "
+                f"{dialog.get_window_count()} extraction window(s)",
                 3000,
             )
 
@@ -884,7 +927,7 @@ class FitFetchApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def start_extraction(self, method: str = "v1") -> None:
-        if self.extract_worker and self.extract_worker.isRunning():
+        if self._extraction_running():
             return
 
         selected = self.get_selected_links()
@@ -910,20 +953,10 @@ class FitFetchApp(QMainWindow):
                 parent=self,
             )
             self.update_status("Starting V1 extraction (Cloudflare bypass)...")
+            self._wire_extract_worker(self.extract_worker, method="v1")
+            self.extract_worker.start()
         else:
-            worker = self._build_v2_worker(selected)
-            if worker is None:
-                self.fetch_btn.setEnabled(True)
-                self.extract_v2_btn.setEnabled(True)
-                return
-            self.extract_worker = worker
-            browser_path = getattr(worker, "browser_executable_path", "") or ""
-            self.update_status(
-                f"Starting V2 extraction (Browser: {os.path.basename(browser_path) or 'auto'})..."
-            )
-
-        self._wire_extract_worker(self.extract_worker, method=method)
-        self.extract_worker.start()
+            self._start_v2_workers(selected, is_retry=False)
 
     def on_extract_error(self, error_msg: str) -> None:
         self.update_status(f"Error: {error_msg}")
@@ -932,6 +965,227 @@ class FitFetchApp(QMainWindow):
         QMessageBox.critical(self, "Error", f"Extraction error:\n{error_msg}")
 
     def on_extraction_complete(self) -> None:
+        """Single-worker (V1) completion handler."""
+        self._finish_extraction_run()
+
+    # ------------------------------------------------------------------
+    # V2 session state (successful links / error tracking)
+    # ------------------------------------------------------------------
+
+    def _extraction_running(self) -> bool:
+        if self.extract_worker and self.extract_worker.isRunning():
+            return True
+        return any(w.isRunning() for w in self._active_v2_workers)
+
+    def _split_links(self, links: list[str]) -> list[list[str]]:
+        """Split *links* as evenly as possible across the V2 windows."""
+        window_count = self._config.window_count
+        batches: list[list[str]] = [[] for _ in range(window_count)]
+        for i, link in enumerate(links):
+            batches[i % window_count].append(link)
+        return batches
+
+    def _configured_window_size(self) -> tuple[int, int]:
+        """Return the configured extraction browser window size ``(w, h)``."""
+        for arg in ZENDRIVER_BROWSER_ARGS:
+            if arg.startswith("--window-size="):
+                try:
+                    w, h = (int(x) for x in arg.split("=", 1)[1].split(",", 1))
+                    return w, h
+                except ValueError, TypeError:
+                    break
+        return (
+            ZENDRIVER_WINDOW_DEFAULT_WIDTH,
+            ZENDRIVER_WINDOW_DEFAULT_HEIGHT,
+        )
+
+    def _compute_window_positions(self, count: int) -> list[tuple[int, int]]:
+        """Return a position per window.
+
+        When random positioning is enabled, each window is placed at a random
+        position that keeps the whole window inside the available screen area,
+        avoiding other windows when possible. Otherwise windows are stacked
+        vertically along the left edge.
+        """
+        width, height = self._configured_window_size()
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            left = geo.x()
+            top = geo.y()
+            screen_width = geo.width()
+            screen_height = geo.height()
+        else:
+            left, top, screen_width, screen_height = 0, 0, 1920, 1000
+
+        if self._config.random_window_positions:
+            return self._random_window_positions(
+                count, width, height, left, top, screen_width, screen_height
+            )
+
+        step = height + ZENDRIVER_WINDOW_GAP
+        if count > 1 and step * count > screen_height:
+            step = max(60, (screen_height - ZENDRIVER_WINDOW_GAP) // count)
+
+        return [(left, top + i * step) for i in range(count)]
+
+    def _random_window_positions(
+        self,
+        count: int,
+        width: int,
+        height: int,
+        left: int,
+        top: int,
+        screen_width: int,
+        screen_height: int,
+    ) -> list[tuple[int, int]]:
+        """Return *count* random positions, each fully on the visible screen.
+
+        Positions are chosen to avoid overlapping existing windows when the
+        screen is large enough; if the screen is too small to spread all
+        windows out, they are still placed at random non-identical positions.
+        """
+        max_x = max(left, left + screen_width - width)
+        max_y = max(top, top + screen_height - height)
+
+        if count <= 0:
+            return []
+        if count == 1 or max_x - left <= 0 or max_y - top <= 0:
+            return [(left, top) for _ in range(count)]
+
+        placed: list[tuple[int, int]] = []
+
+        def _overlaps(x: int, y: int) -> bool:
+            return any(
+                abs(x - px) < width and abs(y - py) < height for px, py in placed
+            )
+
+        for _ in range(count):
+            position = None
+            for _attempt in range(12):
+                candidate = (
+                    random.randint(left, max_x),
+                    random.randint(top, max_y),
+                )
+                if not _overlaps(*candidate):
+                    position = candidate
+                    break
+            if position is None:
+                position = (
+                    random.randint(left, max_x),
+                    random.randint(top, max_y),
+                )
+            placed.append(position)
+        return placed
+
+    def _start_v2_workers(self, links: list[str], is_retry: bool = False) -> None:
+        """Launch *links* across ``window_count`` browser windows in parallel."""
+        if not links:
+            return
+        browser_path = self._browser_manager.get_browser_path()
+        if not browser_path:
+            QMessageBox.critical(
+                self,
+                "No Browser Found",
+                "No Chromium-based browser found on your system.\n\n"
+                "Please install one of the following browsers:\n"
+                "- Google Chrome\n"
+                "- Microsoft Edge\n"
+                "- Brave Browser\n"
+                "- Chromium\n\n"
+                "Then restart the application and try again.",
+            )
+            return
+
+        workers: list[ZendriverWorker] = []
+        totals: dict[int, int] = {}
+        for idx, batch in enumerate(self._split_links(links), 1):
+            if not batch:
+                continue
+            worker = ZendriverWorker(
+                batch,
+                delay=self._config.v2_delay,
+                browser_executable_path=browser_path,
+                profile_index=idx,
+                parent=self,
+            )
+            worker._window_index = idx
+            workers.append(worker)
+            totals[idx] = len(batch)
+
+        positions = self._compute_window_positions(len(workers))
+        for worker, pos in zip(workers, positions):
+            worker.window_position = pos
+
+        self._active_v2_workers = workers
+        self._window_totals = totals
+        self._window_progress = {idx: 0 for idx in totals}
+        self._window_done = set()
+        self._retry_snapshot = list(links) if is_retry else None
+        self._extract_start_time = time.time()
+
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMaximum(len(links))
+        self.fetch_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
+        self.retry_errors_btn.setEnabled(False)
+        self.window_status_label.show()
+        self._update_v2_progress_label()
+
+        label = "Re-extracting failed links" if is_retry else "Starting V2 extraction"
+        self.update_status(f"{label} ({len(links)} links, {len(workers)} window(s))...")
+
+        for worker in workers:
+            idx: int = worker._window_index
+            worker.status_update.connect(
+                lambda msg, i=idx: self._on_v2_window_status(i, msg)
+            )
+            worker.progress_update.connect(
+                lambda value, i=idx: self._on_v2_window_progress(i, value)
+            )
+            worker.link_found.connect(self.on_v2_link_found)
+            worker.link_failed.connect(self.on_v2_link_failed)
+            worker.error_occurred.connect(self._on_v2_window_error)
+            worker.finished.connect(lambda i=idx: self._on_v2_window_finished(i))
+            worker.start()
+
+    def _on_v2_window_status(self, idx: int, msg: str) -> None:
+        self.update_status(f"Window {idx}: {msg}")
+
+    def _on_v2_window_progress(self, idx: int, value: int) -> None:
+        self._window_progress[idx] = value
+        maximum = int(sum(self._window_totals.values()))
+        self.progress_bar.setValue(min(sum(self._window_progress.values()), maximum))
+        self._update_v2_progress_label()
+
+    def _update_v2_progress_label(self) -> None:
+        parts = []
+        for idx in sorted(self._window_totals):
+            total = self._window_totals[idx]
+            current = (
+                total if idx in self._window_done else self._window_progress.get(idx, 0)
+            )
+            parts.append(f"Window {idx}: {current}/{total}")
+        self.window_status_label.setText(" · ".join(parts))
+
+    def _on_v2_window_error(self, error_msg: str) -> None:
+        self.update_status(f"V2 window error: {error_msg}")
+
+    def _on_v2_window_finished(self, idx: int) -> None:
+        self._window_done.add(idx)
+        self._update_v2_progress_label()
+        if self._window_totals and len(self._window_done) >= len(self._window_totals):
+            self._finalize_v2_run()
+
+    def _finalize_v2_run(self) -> None:
+        self._active_v2_workers = []
+        self._window_totals = {}
+        self._window_progress = {}
+        self._window_done = set()
+        self.window_status_label.hide()
+        self._finish_extraction_run()
+
+    def _finish_extraction_run(self) -> None:
         self.fetch_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
         self._refresh_v2_ui()
@@ -957,37 +1211,13 @@ class FitFetchApp(QMainWindow):
             )
             return
 
-        self.update_link_count()
         self._refresh_v2_ui()
-        count = self.link_count.text()
-        self.update_status(f"Extraction complete ({count}) ({elapsed:.1f}s)")
-
-    # ------------------------------------------------------------------
-    # V2 session state (successful links / error tracking)
-    # ------------------------------------------------------------------
-
-    def _build_v2_worker(self, links: list[str]) -> ZendriverWorker | None:
-        """Create a V2 (Zendriver) worker for *links*, or None if no browser."""
-        browser_path = self._browser_manager.get_browser_path()
-        if not browser_path:
-            QMessageBox.critical(
-                self,
-                "No Browser Found",
-                "No Chromium-based browser found on your system.\n\n"
-                "Please install one of the following browsers:\n"
-                "- Google Chrome\n"
-                "- Microsoft Edge\n"
-                "- Brave Browser\n"
-                "- Chromium\n\n"
-                "Then restart the application and try again.",
-            )
-            return None
-        return ZendriverWorker(
-            links,
-            delay=self._config.v2_delay,
-            browser_executable_path=browser_path,
-            parent=self,
-        )
+        if self.successful_links:
+            count_text = self.link_count.text()
+        else:
+            self.update_link_count()
+            count_text = self.link_count.text()
+        self.update_status(f"Extraction complete ({count_text}) ({elapsed:.1f}s)")
 
     def _wire_extract_worker(self, worker, method: str) -> None:
         worker.status_update.connect(self.update_status)
@@ -1051,29 +1281,13 @@ class FitFetchApp(QMainWindow):
         logger.debug("V2 extraction failed for %s: %s", filename, error_msg)
 
     def retry_errors(self) -> None:
-        if self.extract_worker and self.extract_worker.isRunning():
+        if self._extraction_running():
             return
         errors = list(self.error_links)
         if not errors:
             self.update_status("No failed links to re-extract")
             return
-
-        worker = self._build_v2_worker(errors)
-        if worker is None:
-            return
-
-        self._retry_snapshot = list(errors)
-        self._extract_start_time = time.time()
-        self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(len(errors))
-        self.fetch_btn.setEnabled(False)
-        self.extract_v2_btn.setEnabled(False)
-        self.retry_errors_btn.setEnabled(False)
-        self.update_status(f"Re-extracting {len(errors)} failed link(s)...")
-
-        self.extract_worker = worker
-        self._wire_extract_worker(worker, method="v2")
-        worker.start()
+        self._start_v2_workers(errors, is_retry=True)
 
     def copy_successful_links(self) -> None:
         if not self.successful_links:
@@ -1166,25 +1380,9 @@ class FitFetchApp(QMainWindow):
 
     def _extract_v2_links(self, links: list[str], status_prefix: str) -> None:
         """Start a V2 extraction for *links* without resetting the session."""
-        if not links:
+        if not links or self._extraction_running():
             return
-        if self.extract_worker and self.extract_worker.isRunning():
-            return
-        worker = self._build_v2_worker(links)
-        if worker is None:
-            return
-
-        self._extract_start_time = time.time()
-        self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(len(links))
-        self.fetch_btn.setEnabled(False)
-        self.extract_v2_btn.setEnabled(False)
-        self.retry_errors_btn.setEnabled(False)
-        self.update_status(f"{status_prefix} ({len(links)} link(s))...")
-
-        self.extract_worker = worker
-        self._wire_extract_worker(worker, method="v2")
-        worker.start()
+        self._start_v2_workers(links, is_retry=False)
 
     # ------------------------------------------------------------------
     # Save / Copy / Clear

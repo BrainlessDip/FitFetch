@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from ..logger import logger
 from ..services.github_service import GitHubService
 
 

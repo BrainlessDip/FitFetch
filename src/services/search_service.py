@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from ..constants import DEFAULT_USER_AGENT, FITGIRL_SEARCH_URL, REQUEST_TIMEOUT
 from ..extraction.parser import FitGirlParser
-from ..logger import logger
 from ..models.data_models import FitGirlPagination, FitGirlSearchResult
 
 
@@ -45,9 +44,7 @@ class SearchService:
         try:
             params = {"s": query}
             url = (
-                f"{FITGIRL_SEARCH_URL}page/{page}/"
-                if page > 1
-                else FITGIRL_SEARCH_URL
+                f"{FITGIRL_SEARCH_URL}page/{page}/" if page > 1 else FITGIRL_SEARCH_URL
             )
             resp = session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()

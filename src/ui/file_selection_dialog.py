@@ -7,14 +7,13 @@ smart detection, quick presets, and real-time summary.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
-from PyQt6.QtCore import Qt, QEvent, QSize, pyqtSignal
-from PyQt6.QtGui import QColor, QKeySequence, QShortcut, QCursor
+from PyQt6.QtCore import Qt, QEvent, QSize
+from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -23,7 +22,6 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -53,8 +51,8 @@ BADGE_COLORS: dict[str, str] = {
 }
 
 CATEGORY_ICONS: dict[str, str] = {
-    "Setup": "\u25B6",
-    "Main": "\u25A3",
+    "Setup": "\u25b6",
+    "Main": "\u25a3",
     "Optional": "\u2606",
     "Language Pack": "\u2699",
     "Update": "\u2191",
@@ -110,9 +108,11 @@ class FileItem:
         if not self.group_name:
             self.group_name = self.category
         if not self.icon_char:
-            self.icon_char = CATEGORY_ICONS.get(self.category, "\u25CB")
+            self.icon_char = CATEGORY_ICONS.get(self.category, "\u25cb")
         if not self.badge_color:
-            self.badge_color = BADGE_COLORS.get(self.category, ModernStyle.TEXT_SECONDARY)
+            self.badge_color = BADGE_COLORS.get(
+                self.category, ModernStyle.TEXT_SECONDARY
+            )
         if not self.description:
             self.description = _build_description(self)
 
@@ -134,9 +134,7 @@ def _build_description(item: FileItem) -> str:
 # Smart detection
 # ═══════════════════════════════════════════════════════════════════════════
 
-_SETUP_RE = re.compile(
-    r"setup|installer|autorun|\.exe$", re.IGNORECASE
-)
+_SETUP_RE = re.compile(r"setup|installer|autorun|\.exe$", re.IGNORECASE)
 _LANG_RE = re.compile(
     r"lang|language|selective|"
     r"english|russian|chinese|japanese|french|german|spanish|"
@@ -145,7 +143,9 @@ _LANG_RE = re.compile(
     re.IGNORECASE,
 )
 _UPDATE_RE = re.compile(r"update|patch|hotfix|cumulative", re.IGNORECASE)
-_BONUS_RE = re.compile(r"bonus|ost|soundtrack|wallpaper|artbook|manual|comic", re.IGNORECASE)
+_BONUS_RE = re.compile(
+    r"bonus|ost|soundtrack|wallpaper|artbook|manual|comic", re.IGNORECASE
+)
 _CRACK_RE = re.compile(r"crack|fix|nosTEAM|skidrow|reloaded", re.IGNORECASE)
 _DLC_RE = re.compile(r"\bdlc\b", re.IGNORECASE)
 _REDIST_RE = re.compile(
@@ -387,8 +387,7 @@ class FileSelectionDialog(QDialog):
 
         title = QLabel("Filters")
         title.setStyleSheet(
-            "font-size: 14px; font-weight: 700;"
-            f"color: {ModernStyle.TEXT_PRIMARY};"
+            f"font-size: 14px; font-weight: 700;color: {ModernStyle.TEXT_PRIMARY};"
         )
         lay.addWidget(title)
 
@@ -420,9 +419,15 @@ class FileSelectionDialog(QDialog):
         self._status_combo = QComboBox()
         self._status_combo.setFixedHeight(30)
         self._status_combo.setStyleSheet(ModernStyle.combobox_style())
-        self._status_combo.addItems([
-            "All", "Required", "Optional", "Selected", "Unselected",
-        ])
+        self._status_combo.addItems(
+            [
+                "All",
+                "Required",
+                "Optional",
+                "Selected",
+                "Unselected",
+            ]
+        )
         self._status_combo.currentIndexChanged.connect(self._apply_filters)
         lay.addWidget(self._status_combo)
 
@@ -437,8 +442,7 @@ class FileSelectionDialog(QDialog):
         self._category_combo.setFixedHeight(30)
         self._category_combo.setStyleSheet(ModernStyle.combobox_style())
         cats = ["All Categories"] + [
-            c for c in CATEGORY_ORDER
-            if any(it.category == c for it in self._items)
+            c for c in CATEGORY_ORDER if any(it.category == c for it in self._items)
         ]
         self._category_combo.addItems(cats)
         self._category_combo.currentIndexChanged.connect(self._apply_filters)
@@ -491,9 +495,7 @@ class FileSelectionDialog(QDialog):
                     background-color: {ModernStyle.BG_ACTIVE};
                 }}
             """)
-            btn.clicked.connect(
-                lambda _, n=name: self._apply_preset(n)
-            )
+            btn.clicked.connect(lambda _, n=name: self._apply_preset(n))
             lay.addWidget(btn)
 
         lay.addStretch()
@@ -528,9 +530,7 @@ class FileSelectionDialog(QDialog):
         self._tree.setHeaderLabels(["#", "Filename"])
         self._tree.setRootIsDecorated(False)
         self._tree.setAlternatingRowColors(True)
-        self._tree.setSelectionMode(
-            QTreeWidget.SelectionMode.ExtendedSelection
-        )
+        self._tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self._tree.setUniformRowHeights(True)
         self._tree.setIndentation(24)
         self._tree.setAnimated(True)
@@ -540,12 +540,8 @@ class FileSelectionDialog(QDialog):
 
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.itemDoubleClicked.connect(self._on_double_click)
-        self._tree.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self._tree.customContextMenuRequested.connect(
-            self._on_context_menu
-        )
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
         # viewport events for drag selection
         self._tree.viewport().installEventFilter(self)
@@ -568,8 +564,7 @@ class FileSelectionDialog(QDialog):
 
         lbl = QLabel("Selection Summary")
         lbl.setStyleSheet(
-            "font-size: 14px; font-weight: 700;"
-            f"color: {ModernStyle.TEXT_PRIMARY};"
+            f"font-size: 14px; font-weight: 700;color: {ModernStyle.TEXT_PRIMARY};"
         )
         lay.addWidget(lbl)
 
@@ -734,10 +729,13 @@ class FileSelectionDialog(QDialog):
 
     def _populate_flat(self, items: list[FileItem]) -> None:
         self._tree.setRootIsDecorated(False)
-        sorted_items = sorted(items, key=lambda it: (
-            0 if it.part_num.isdigit() else 1,
-            int(it.part_num) if it.part_num.isdigit() else 0,
-        ))
+        sorted_items = sorted(
+            items,
+            key=lambda it: (
+                0 if it.part_num.isdigit() else 1,
+                int(it.part_num) if it.part_num.isdigit() else 0,
+            ),
+        )
         text_col = QColor(ModernStyle.TEXT_PRIMARY)
         part_col = QColor(ModernStyle.ACCENT)
         vis_idx = 0
@@ -750,7 +748,10 @@ class FileSelectionDialog(QDialog):
             twi.setData(0, _FILE_ITEM_ROLE, real_idx)
             twi.setForeground(0, part_col)
             twi.setForeground(1, text_col)
-            twi.setCheckState(0, Qt.CheckState.Checked if item.is_selected else Qt.CheckState.Unchecked)
+            twi.setCheckState(
+                0,
+                Qt.CheckState.Checked if item.is_selected else Qt.CheckState.Unchecked,
+            )
             twi.setSizeHint(0, QSize(0, 32))
             if vis_idx % 2 == 1:
                 twi.setBackground(0, QColor(ModernStyle.BG_SECONDARY))
@@ -776,10 +777,12 @@ class FileSelectionDialog(QDialog):
             color = BADGE_COLORS.get(gname, ModernStyle.TEXT_SECONDARY)
 
             # sort within group by part number
-            gitems.sort(key=lambda t: (
-                0 if t[1].part_num.isdigit() else 1,
-                int(t[1].part_num) if t[1].part_num.isdigit() else 0,
-            ))
+            gitems.sort(
+                key=lambda t: (
+                    0 if t[1].part_num.isdigit() else 1,
+                    int(t[1].part_num) if t[1].part_num.isdigit() else 0,
+                )
+            )
 
             hdr = QTreeWidgetItem()
             hdr.setData(0, Qt.ItemDataRole.DisplayRole, f"{gname}  ({len(gitems)})")
@@ -803,7 +806,12 @@ class FileSelectionDialog(QDialog):
                 twi.setData(0, _FILE_ITEM_ROLE, real_idx)
                 twi.setForeground(0, part_col)
                 twi.setForeground(1, text_col)
-                twi.setCheckState(0, Qt.CheckState.Checked if item.is_selected else Qt.CheckState.Unchecked)
+                twi.setCheckState(
+                    0,
+                    Qt.CheckState.Checked
+                    if item.is_selected
+                    else Qt.CheckState.Unchecked,
+                )
                 twi.setSizeHint(0, QSize(0, 28))
                 if vis_idx % 2 == 1:
                     twi.setBackground(0, QColor(ModernStyle.BG_SECONDARY))
@@ -834,7 +842,8 @@ class FileSelectionDialog(QDialog):
         if total == 0:
             return
         checked = sum(
-            1 for i in range(total)
+            1
+            for i in range(total)
             if header.child(i).checkState(0) == Qt.CheckState.Checked
         )
         self._updating_check = True
@@ -858,7 +867,9 @@ class FileSelectionDialog(QDialog):
             return
         item.is_selected = checked
         self._updating_check = True
-        twi.setCheckState(0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        twi.setCheckState(
+            0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        )
         self._updating_check = False
 
     # ------------------------------------------------------------------
@@ -924,7 +935,10 @@ class FileSelectionDialog(QDialog):
         if obj is self._tree.viewport():
             etype = event.type()
 
-            if etype == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            if (
+                etype == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
                 item = self._tree.itemAt(event.pos())
                 if item:
                     fi = self._get_file_item(item)
@@ -1004,7 +1018,7 @@ class FileSelectionDialog(QDialog):
             lambda: self._select_by_pattern(fi.filename),
         )
         menu.addAction(
-            f"Select All in \"{fi.category}\"",
+            f'Select All in "{fi.category}"',
             lambda: self._select_by_category(fi.category),
         )
         menu.addSeparator()
@@ -1123,8 +1137,7 @@ class FileSelectionDialog(QDialog):
         self._warning_lbl.setVisible(show_warn)
         if show_warn:
             self._warning_lbl.setText(
-                "\u26a0 No required files selected. "
-                "The download may be incomplete."
+                "\u26a0 No required files selected. The download may be incomplete."
             )
 
         # preview
@@ -1141,15 +1154,11 @@ class FileSelectionDialog(QDialog):
 
             icon = QLabel(it.icon_char)
             icon.setFixedWidth(16)
-            icon.setStyleSheet(
-                f"color: {it.badge_color}; font-size: 11px;"
-            )
+            icon.setStyleSheet(f"color: {it.badge_color}; font-size: 11px;")
             row.addWidget(icon)
 
             name = QLabel(it.filename)
-            name.setStyleSheet(
-                f"color: {ModernStyle.TEXT_SECONDARY}; font-size: 11px;"
-            )
+            name.setStyleSheet(f"color: {ModernStyle.TEXT_SECONDARY}; font-size: 11px;")
             row.addWidget(name, 1)
 
             container = QWidget()
@@ -1159,16 +1168,13 @@ class FileSelectionDialog(QDialog):
         if n > 100:
             lbl = QLabel(f"  \u2026 and {n - 100} more")
             lbl.setStyleSheet(
-                f"color: {ModernStyle.TEXT_MUTED}; font-size: 10px;"
-                f"font-style: italic;"
+                f"color: {ModernStyle.TEXT_MUTED}; font-size: 10px;font-style: italic;"
             )
             self._preview_lay.addWidget(lbl)
 
         if not sel:
             lbl = QLabel("  No files selected")
-            lbl.setStyleSheet(
-                f"color: {ModernStyle.TEXT_MUTED}; font-size: 11px;"
-            )
+            lbl.setStyleSheet(f"color: {ModernStyle.TEXT_MUTED}; font-size: 11px;")
             self._preview_lay.addWidget(lbl)
 
     # ------------------------------------------------------------------

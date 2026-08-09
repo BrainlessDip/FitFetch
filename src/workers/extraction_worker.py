@@ -9,7 +9,11 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from ..constants import MAX_CF_THREADS, RE_FILE_ID
 from ..extraction.cloudflare import CloudflareBypass
 from ..logger import logger
-from ..utils import extract_filename, extract_part_num
+from ..utils import (
+    extract_filename,
+    extract_part_num,
+    remove_worker_profile_dir,
+)
 
 
 class CloudflareWorker(QThread):
@@ -76,7 +80,7 @@ class CloudflareWorker(QThread):
                     retry_after = headers.get("Retry-After") if headers else None
                     try:
                         retry_seconds = int(retry_after) if retry_after else 60
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         retry_seconds = 60
                     self.link_found.emit(
                         f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds - (Part: {part_num}) - [{i}/{self.total_links}]"
@@ -150,6 +154,8 @@ class ZendriverWorker(QThread):
         links: list[str],
         delay: int = 3000,
         browser_executable_path: str | None = None,
+        window_position: tuple[int, int] | None = None,
+        profile_index: int = 1,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -157,6 +163,9 @@ class ZendriverWorker(QThread):
         self.total_links = len(links)
         self.delay = delay
         self.browser_executable_path = browser_executable_path
+        self.window_position = window_position
+        self.profile_index = profile_index
+        self._profile_dir = None
         self._shutdown_requested = False
         self._client = None
 
@@ -170,8 +179,13 @@ class ZendriverWorker(QThread):
 
     async def _async_run(self) -> None:
         from ..browser.zendriver_client import ZendriverClient, resolve_direct_url
+        from ..utils import get_worker_profile_dir
 
-        client = ZendriverClient()
+        self._profile_dir = str(get_worker_profile_dir(self.profile_index))
+        client = ZendriverClient(
+            window_position=self.window_position,
+            user_data_dir=self._profile_dir,
+        )
         self._client = client
 
         try:
@@ -205,7 +219,7 @@ class ZendriverWorker(QThread):
                     self.status_update.emit(
                         f"Extracting from {filename}... - (Part: {part_num}) - [{i}/{self.total_links}]"
                     )
-                    download_url, cf_clearance, err = await resolve_direct_url(tab, link)
+                    download_url, err = await resolve_direct_url(tab, link)
                     if not download_url:
                         error_msg = err or "No HX-Redirect received"
                         self.link_failed.emit(link, error_msg)
@@ -234,3 +248,5 @@ class ZendriverWorker(QThread):
                 self.error_occurred.emit(f"Zendriver error: {exc}")
         finally:
             await client.stop()
+            if self._profile_dir:
+                remove_worker_profile_dir(self.profile_index)

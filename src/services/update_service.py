@@ -5,8 +5,6 @@ from __future__ import annotations
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from ..constants import APP_NAME, OWNER, VERSION
-from ..logger import logger
-from .github_service import GitHubService
 
 
 class UpdateManager(QObject):

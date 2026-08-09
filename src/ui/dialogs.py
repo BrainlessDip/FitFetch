@@ -7,7 +7,7 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QComboBox,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -18,10 +18,10 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QVBoxLayout,
-    QWidget,
 )
 
 from ..constants import APP_NAME, VERSION
+from ..config import MAX_WINDOW_COUNT, MIN_WINDOW_COUNT
 from .styles import ModernStyle
 from .widgets import ModernGroupBox
 
@@ -107,6 +107,73 @@ class SettingsDialog(QDialog):
 
     def get_v2_delay(self) -> int:
         return self.v2_delay_spin.value()
+
+
+# ---------------------------------------------------------------------------
+# Multi-window settings dialog
+# ---------------------------------------------------------------------------
+
+
+class MultiWindowSettingsDialog(QDialog):
+    """Dialog for customising the number of parallel V2 extraction windows."""
+
+    def __init__(
+        self,
+        window_count: int = 2,
+        random_positions: bool = False,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Multi-Window Settings - FitFetch")
+        self.setMinimumWidth(400)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        mw_group = ModernGroupBox("Multi-Window Settings")
+        mw_layout = QFormLayout(mw_group)
+
+        self.window_count_spin = QSpinBox()
+        self.window_count_spin.setRange(MIN_WINDOW_COUNT, MAX_WINDOW_COUNT)
+        self.window_count_spin.setSingleStep(1)
+        self.window_count_spin.setValue(window_count)
+        self.window_count_spin.setToolTip(
+            "Number of independent browser windows used during V2 extraction.\n"
+            "Each window runs in its own isolated worker and profile.\n"
+            f"Range: {MIN_WINDOW_COUNT} - {MAX_WINDOW_COUNT}. Default: 2."
+        )
+        mw_layout.addRow("Number of Extraction Windows:", self.window_count_spin)
+
+        self.random_positions_check = QCheckBox("Spawn windows at random positions")
+        self.random_positions_check.setChecked(random_positions)
+        self.random_positions_check.setToolTip(
+            "When enabled, extraction windows are placed at random positions\n"
+            "on the available screen instead of stacking at the left edge."
+        )
+        mw_layout.addRow("", self.random_positions_check)
+
+        mw_warning = QLabel(
+            "Make sure you're rich enough to increase the value — each window "
+            "uses additional CPU, RAM, and browser resources."
+        )
+        mw_warning.setWordWrap(True)
+        mw_warning.setStyleSheet(f"color: {ModernStyle.WARNING}; font-size: 11px;")
+        mw_layout.addRow("", mw_warning)
+
+        layout.addWidget(mw_group)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def get_window_count(self) -> int:
+        return self.window_count_spin.value()
+
+    def get_random_positions(self) -> bool:
+        return self.random_positions_check.isChecked()
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +429,9 @@ class HelpDialog(QMessageBox):
               <li><b>V1 Request Delay:</b> Time between each Cloudflare request (default: 0 ms). Increase if rate-limited.</li>
               <li><b>V2 Request Delay:</b> Time between each browser request (default: 0 ms). Increase if rate-limited.</li>
             </ul>
+            <p>Go to <b>Settings &gt; Multi-Window...</b> to choose how many independent
+            browser windows run in parallel during V2 extraction (default: 1).
+            Each window uses its own isolated browser profile.</p>
 
             <hr>
 
@@ -391,7 +461,5 @@ def _format_date(published_at: str) -> str:
     try:
         dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
         return dt.strftime("%Y-%m-%d")
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return published_at[:10] if len(published_at) >= 10 else published_at
-
-

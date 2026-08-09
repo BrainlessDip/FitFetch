@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ..constants import APP_NAME, NETWORK_TIMEOUT
-from ..logger import logger
 
 
 class GitHubService:
@@ -73,5 +72,5 @@ class GitHubService:
 
         try:
             return parse(remote) > parse(local)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return False

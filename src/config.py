@@ -10,6 +10,11 @@ from PyQt6.QtCore import QByteArray, QSettings
 
 from .constants import APP_NAME
 
+# Number of parallel V2 extraction browser windows (also = profile count).
+DEFAULT_WINDOW_COUNT = 1
+MIN_WINDOW_COUNT = 1
+MAX_WINDOW_COUNT = 8
+
 
 class ConfigManager:
     """Typed wrapper around :class:`QSettings` for FitFetch."""
@@ -36,6 +41,32 @@ class ConfigManager:
     @v2_delay.setter
     def v2_delay(self, value: int) -> None:
         self._settings.setValue("delays/v2", value)
+
+    # -- Multi-window settings -----------------------------------------------
+
+    @property
+    def window_count(self) -> int:
+        """Number of parallel V2 extraction browser windows (default: 2)."""
+        return int(
+            self._settings.value(
+                "extraction/window_count", DEFAULT_WINDOW_COUNT, type=int
+            )
+        )
+
+    @window_count.setter
+    def window_count(self, value: int) -> None:
+        self._settings.setValue("extraction/window_count", int(value))
+
+    @property
+    def random_window_positions(self) -> bool:
+        """Whether V2 browser windows spawn at random screen positions."""
+        return bool(
+            self._settings.value("extraction/random_window_positions", False, type=bool)
+        )
+
+    @random_window_positions.setter
+    def random_window_positions(self, value: bool) -> None:
+        self._settings.setValue("extraction/random_window_positions", bool(value))
 
     # -- Browser selection ---------------------------------------------------
 

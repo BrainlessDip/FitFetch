@@ -86,7 +86,7 @@ BROWSER_PATHS: dict[str, list[str]] = {
 ZENDRIVER_CF_VERIFY_TIMEOUT = 20
 ZENDRIVER_CF_VERIFY_CLICK_DELAY = 5
 ZENDRIVER_BROWSER_ARGS = [
-    "--window-size=500,550",
+    "--window-size=500,175",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-extensions",
@@ -94,6 +94,11 @@ ZENDRIVER_BROWSER_ARGS = [
     "--disable-background-networking",
     "--disable-popup-blocking",
 ]
+# Vertical gap (px) between stacked extraction windows; also the fallback
+# window size parsed from --window-size when that flag is missing.
+ZENDRIVER_WINDOW_GAP = 5
+ZENDRIVER_WINDOW_DEFAULT_WIDTH = 500
+ZENDRIVER_WINDOW_DEFAULT_HEIGHT = 175
 
 # ---------------------------------------------------------------------------
 # Search

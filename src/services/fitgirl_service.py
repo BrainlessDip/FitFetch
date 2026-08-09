@@ -5,7 +5,6 @@ from __future__ import annotations
 import re as _re
 
 from ..constants import CF_TIMEOUT, DEFAULT_USER_AGENT
-from ..logger import logger
 
 
 class FitGirlService:
