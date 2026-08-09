@@ -1,6 +1,6 @@
 # FitFetch - FitGirl Repack Link Extractor
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/BrainlessDip/fitfetch)
+[![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)](https://github.com/BrainlessDip/fitfetch)
 [![Python](https://img.shields.io/badge/python-3.14+-green.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 

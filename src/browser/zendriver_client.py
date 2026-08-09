@@ -170,11 +170,11 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
     the site's download button, and reads the ``HX-Redirect`` response header.
 
     Returns ``(direct_url, None)`` on success or
-    ``(None, None, error)`` on failure.
+    ``(None, error)`` on failure.
     """
     file_id_m = RE_FILE_ID.search(link)
     if not file_id_m:
-        return None, None, f"No file ID found in {link}"
+        return None, f"No file ID found in {link}"
     file_id = file_id_m.group(1)
 
     page_url = link.split("#")[0]
@@ -184,10 +184,10 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
         await tab.wait_for_ready_state("complete")
     except Exception as exc:
         logger.debug("Navigation failed for %s: %s", page_url, exc)
-        return None, None, f"Navigation failed: {exc}"
+        return None, f"Navigation failed: {exc}"
 
     if not await _solve_cloudflare(tab):
-        return None, None, "Turnstile/Cloudflare verification failed"
+        return None, "Turnstile/Cloudflare verification failed"
 
     post_path = f"/f/{file_id}/go"
     logger.info("[POST] %s", post_path)
@@ -222,18 +222,18 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
         result = await tab.evaluate(script, await_promise=True)
     except Exception as exc:
         logger.debug("POST fetch failed for %s: %s", post_path, exc)
-        return None, None, f"POST request failed: {exc}"
+        return None, f"POST request failed: {exc}"
 
     if not isinstance(result, dict):
         logger.debug("Unexpected POST response: %r", result)
-        return None, None, f"Unexpected response body ({type(result).__name__})"
+        return None, f"Unexpected response body ({type(result).__name__})"
 
     if "error" in result:
         error = str(result["error"])
         if error == "no_turnstile_token":
             logger.debug("Turnstile token unavailable on %s", page_url)
-            return None, None, "Turnstile token unavailable"
-        return None, None, f"POST request failed: {error}"
+            return None, "Turnstile token unavailable"
+        return None, f"POST request failed: {error}"
 
     status = result.get("status")
     if status is not None:
@@ -243,11 +243,11 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
             status = None
     logger.info("[STATUS] %s", status)
     if status is None or not (200 <= status < 300):
-        return None, None, f"POST failed with non-2xx status {status}"
+        return None, f"POST failed with non-2xx status {status}"
 
     direct_url = result.get("hxRedirect") or ""
     if not direct_url:
-        return None, None, "HX-Redirect header missing from response"
+        return None, "HX-Redirect header missing from response"
 
     logger.info("[HX-REDIRECT] %s", direct_url)
     return direct_url, None
