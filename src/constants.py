@@ -12,7 +12,7 @@ import re
 # ---------------------------------------------------------------------------
 # Identity
 # ---------------------------------------------------------------------------
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 APP_NAME = "FitFetch"
 OWNER = "BrainlessDip"
 
@@ -84,7 +84,7 @@ BROWSER_PATHS: dict[str, list[str]] = {
 # Zendriver / browser automation
 # ---------------------------------------------------------------------------
 ZENDRIVER_CF_VERIFY_TIMEOUT = 20
-ZENDRIVER_CF_VERIFY_CLICK_DELAY = 5
+ZENDRIVER_CF_VERIFY_CLICK_DELAY = 1
 # Max time (ms) to wait on the page for the Turnstile token to appear, and
 # how often (ms) to re-check the token input while waiting.
 ZENDRIVER_TURNSTILE_TOKEN_TIMEOUT_MS = 30000
