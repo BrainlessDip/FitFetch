@@ -7,6 +7,8 @@ from ..constants import (
     ZENDRIVER_BROWSER_ARGS,
     ZENDRIVER_CF_VERIFY_CLICK_DELAY,
     ZENDRIVER_CF_VERIFY_TIMEOUT,
+    ZENDRIVER_TURNSTILE_TOKEN_POLL_MS,
+    ZENDRIVER_TURNSTILE_TOKEN_TIMEOUT_MS,
 )
 from ..logger import logger
 
@@ -82,8 +84,9 @@ async def _solve_cloudflare(tab) -> bool:
         verify_cf,
     )
 
+    timeout = 2 if tab.url == "https://fuckingfast.co/" else 20
     try:
-        is_present = await cf_is_interactive_challenge_present(tab, timeout=2)
+        is_present = await cf_is_interactive_challenge_present(tab, timeout=timeout)
         if not is_present:
             return True
         await verify_cf(
@@ -181,7 +184,6 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
     await clear_host_data(tab, page_url)
     try:
         await tab.get(page_url)
-        await tab.wait_for_ready_state("complete")
     except Exception as exc:
         logger.debug("Navigation failed for %s: %s", page_url, exc)
         return None, f"Navigation failed: {exc}"
@@ -197,9 +199,15 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
     script = (
         "(async()=>{"
         "try{"
+        "const sleep=ms=>new Promise(r=>setTimeout(r,ms));"
+        f"const deadline=Date.now()+{ZENDRIVER_TURNSTILE_TOKEN_TIMEOUT_MS};"
+        "let t=null;"
+        "while(Date.now()<deadline){"
         "const el=document.querySelector('[name=\"cf-turnstile-response\"]');"
-        f"const t={token_expr};"
-        "if(!t){return {error:'no_turnstile_token'}}"
+        f"t={token_expr}||null;"
+        "if(t)break;"
+        f"await sleep({ZENDRIVER_TURNSTILE_TOKEN_POLL_MS});"
+        "}" + "if(!t){return {error:'no_turnstile_token'}}"
         "const r=await fetch(" + repr(post_path) + ",{"
         "method:'POST',"
         "headers:{"
@@ -227,12 +235,14 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
     if not isinstance(result, dict):
         logger.debug("Unexpected POST response: %r", result)
         return None, f"Unexpected response body ({type(result).__name__})"
-
     if "error" in result:
         error = str(result["error"])
         if error == "no_turnstile_token":
             logger.debug("Turnstile token unavailable on %s", page_url)
-            return None, "Turnstile token unavailable"
+            return None, (
+                "Turnstile token unavailable "
+                f"(waited {ZENDRIVER_TURNSTILE_TOKEN_TIMEOUT_MS // 1000}s)"
+            )
         return None, f"POST request failed: {error}"
 
     status = result.get("status")

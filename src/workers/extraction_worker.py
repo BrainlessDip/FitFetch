@@ -80,7 +80,7 @@ class CloudflareWorker(QThread):
                     retry_after = headers.get("Retry-After") if headers else None
                     try:
                         retry_seconds = int(retry_after) if retry_after else 60
-                    except ValueError, TypeError:
+                    except (ValueError, TypeError):
                         retry_seconds = 60
                     self.link_found.emit(
                         f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds - (Part: {part_num}) - [{i}/{self.total_links}]"

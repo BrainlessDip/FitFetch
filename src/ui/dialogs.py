@@ -461,5 +461,5 @@ def _format_date(published_at: str) -> str:
     try:
         dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
         return dt.strftime("%Y-%m-%d")
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return published_at[:10] if len(published_at) >= 10 else published_at

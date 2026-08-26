@@ -772,7 +772,7 @@ class FitFetchApp(QMainWindow):
             try:
                 m = RE_PART_NUM.search(extract_filename(url))
                 return int(m.group(1)) if m else 0
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 return 0
 
         sorted_links = sorted(links, key=_sort_key)
@@ -992,7 +992,7 @@ class FitFetchApp(QMainWindow):
                 try:
                     w, h = (int(x) for x in arg.split("=", 1)[1].split(",", 1))
                     return w, h
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     break
         return (
             ZENDRIVER_WINDOW_DEFAULT_WIDTH,

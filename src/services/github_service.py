@@ -72,5 +72,5 @@ class GitHubService:
 
         try:
             return parse(remote) > parse(local)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return False

@@ -85,6 +85,10 @@ BROWSER_PATHS: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 ZENDRIVER_CF_VERIFY_TIMEOUT = 20
 ZENDRIVER_CF_VERIFY_CLICK_DELAY = 5
+# Max time (ms) to wait on the page for the Turnstile token to appear, and
+# how often (ms) to re-check the token input while waiting.
+ZENDRIVER_TURNSTILE_TOKEN_TIMEOUT_MS = 30000
+ZENDRIVER_TURNSTILE_TOKEN_POLL_MS = 500
 ZENDRIVER_BROWSER_ARGS = [
     "--window-size=500,175",
     "--no-first-run",
