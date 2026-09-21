@@ -318,6 +318,17 @@ class FitFetchApp(QMainWindow):
         self.browser_combo.currentIndexChanged.connect(self._on_browser_changed)
         control_layout.addWidget(self.browser_combo)
 
+        self.extract_v1_btn = QPushButton("Extract V1")
+        self.extract_v1_btn.clicked.connect(lambda: self.start_extraction(method="v1"))
+        self.extract_v1_btn.setEnabled(False)
+        self.extract_v1_btn.setFixedHeight(32)
+        self.extract_v1_btn.setFixedWidth(110)
+        self.extract_v1_btn.setStyleSheet(
+            self.extract_v1_btn.styleSheet()
+            + "QPushButton { padding-left: 14px; padding-right: 14px; }"
+        )
+        control_layout.addWidget(self.extract_v1_btn)
+
         self.extract_v2_btn = QPushButton("Extract V2")
         self.extract_v2_btn.clicked.connect(lambda: self.start_extraction(method="v2"))
         self.extract_v2_btn.setEnabled(False)
@@ -474,6 +485,10 @@ class FitFetchApp(QMainWindow):
         file_menu.addAction(extractor_action)
 
         file_menu.addSeparator()
+
+        extract_v1_action = QAction("Extract V1 (Cloudflare)", self)
+        extract_v1_action.triggered.connect(lambda: self.start_extraction(method="v1"))
+        file_menu.addAction(extract_v1_action)
 
         extract_v2_action = QAction("Extract V2 (Browser)", self)
         extract_v2_action.triggered.connect(lambda: self.start_extraction(method="v2"))
@@ -844,6 +859,7 @@ class FitFetchApp(QMainWindow):
             status += f" ({self._fetched_size})"
         self.update_status(status)
         self.parts_count.setText(f"{len(links)} found")
+        self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
         self.custom_select_btn.setEnabled(True)
 
@@ -893,6 +909,7 @@ class FitFetchApp(QMainWindow):
             return
 
         self.fetch_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
         self.clear_checkboxes()
         self.output_text.clear()
@@ -943,6 +960,7 @@ class FitFetchApp(QMainWindow):
         self._extract_start_time = time.time()
 
         self.fetch_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
 
         if method == "v1":
@@ -961,6 +979,7 @@ class FitFetchApp(QMainWindow):
     def on_extract_error(self, error_msg: str) -> None:
         self.update_status(f"Error: {error_msg}")
         self.fetch_btn.setEnabled(True)
+        self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
         QMessageBox.critical(self, "Error", f"Extraction error:\n{error_msg}")
 
@@ -1127,6 +1146,7 @@ class FitFetchApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(links))
         self.fetch_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
         self.retry_errors_btn.setEnabled(False)
         self.window_status_label.show()
@@ -1187,6 +1207,7 @@ class FitFetchApp(QMainWindow):
 
     def _finish_extraction_run(self) -> None:
         self.fetch_btn.setEnabled(True)
+        self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
         self._refresh_v2_ui()
         elapsed = time.time() - self._extract_start_time

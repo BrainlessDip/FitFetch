@@ -181,51 +181,28 @@ async def resolve_direct_url(tab, link: str) -> tuple[str | None, str | None]:
     file_id = file_id_m.group(1)
 
     page_url = link.split("#")[0]
-    await clear_host_data(tab, page_url)
-    try:
-        await tab.get(page_url)
-    except Exception as exc:
-        logger.debug("Navigation failed for %s: %s", page_url, exc)
-        return None, f"Navigation failed: {exc}"
+    # await clear_host_data(tab, page_url)
+    # try:
+    #     await tab.get(page_url)
+    # except Exception as exc:
+    #     logger.debug("Navigation failed for %s: %s", page_url, exc)
+    #     return None, f"Navigation failed: {exc}"
 
-    if not await _solve_cloudflare(tab):
-        return None, "Turnstile/Cloudflare verification failed"
+    # if not await _solve_cloudflare(tab):
+    #     return None, "Turnstile/Cloudflare verification failed"
 
     post_path = f"/f/{file_id}/go"
     logger.info("[POST] %s", post_path)
-
-    token_expr = "window.turnstileToken||(el&&el.value)"
-
     script = (
         "(async()=>{"
         "try{"
-        "const sleep=ms=>new Promise(r=>setTimeout(r,ms));"
-        f"const deadline=Date.now()+{ZENDRIVER_TURNSTILE_TOKEN_TIMEOUT_MS};"
-        "let t=null;"
-        "while(Date.now()<deadline){"
-        "const el=document.querySelector('[name=\"cf-turnstile-response\"]');"
-        f"t={token_expr}||null;"
-        "if(t)break;"
-        f"await sleep({ZENDRIVER_TURNSTILE_TOKEN_POLL_MS});"
-        "}" + "if(!t){return {error:'no_turnstile_token'}}"
-        "const r=await fetch(" + repr(post_path) + ",{"
-        "method:'POST',"
-        "headers:{"
-        "'content-type':'application/x-www-form-urlencoded',"
-        "'hx-request':'true',"
-        "'hx-current-url':location.href,"
-        "'referer':location.href"
-        "},"
-        "body:new URLSearchParams({'cf-turnstile-response':t})"
-        "});"
-        "return "
-        "{status:r.status,"
-        "hxRedirect:(r.headers.get('HX-Redirect')||r.headers.get('hx-redirect'))||null"
-        "};"
-        "}catch(e){return {error:'fetch:'+String(e&&e.message||e)}}"
+        f"const r=await fetch({post_path!r},{{method:'POST'}});"
+        "return {status:r.status,hxRedirect:(r.headers.get('HX-Redirect')||r.headers.get('hx-redirect'))||null}"
+        "}catch(e){"
+        "return {error:String(e&&e.message||e)}"
+        "}"
         "})()"
     )
-
     try:
         result = await tab.evaluate(script, await_promise=True)
     except Exception as exc:
