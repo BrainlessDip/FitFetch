@@ -1,59 +1,65 @@
-"""Cloudflare-protected page fetching with cloudscraper."""
+"""Cloudflare-protected page fetching with httpx."""
 
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..constants import CF_TIMEOUT, DEFAULT_USER_AGENT, MAX_CF_THREADS
+import httpx
+
+from ..constants import CF_TIMEOUT, MAX_CF_THREADS
 from ..logger import logger
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/153.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+}
+
+RETRY_STATUSES = frozenset({500, 502, 503, 504})
+MAX_RETRIES = 5
+BACKOFF_FACTOR = 1.5
 
 
 class CloudflareBypass:
-    """Handles Cloudflare-protected pages with cloudscraper and retry strategy."""
+    """Handles Cloudflare-protected pages with httpx and retry strategy."""
 
     def __init__(self, threads: int = MAX_CF_THREADS) -> None:
         self.threads = threads
         self.local = threading.local()
 
-    def _create_session(self):
-        import cloudscraper
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-
-        scraper = cloudscraper.create_scraper(
-            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+    def _create_client(self) -> httpx.Client:
+        return httpx.Client(
+            headers=HEADERS,
+            timeout=CF_TIMEOUT,
+            transport=httpx.HTTPTransport(retries=3),
         )
-        scraper.headers.update({"User-Agent": DEFAULT_USER_AGENT})
-        retry_strategy = Retry(
-            total=5,
-            backoff_factor=1.5,
-            status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["GET", "POST"],
-        )
-        adapter = HTTPAdapter(
-            max_retries=retry_strategy, pool_connections=100, pool_maxsize=100
-        )
-        scraper.mount("http://", adapter)
-        scraper.mount("https://", adapter)
-        return scraper
 
-    def _get_session(self):
-        if not hasattr(self.local, "session"):
-            self.local.session = self._create_session()
-        return self.local.session
+    def _get_client(self) -> httpx.Client:
+        if not hasattr(self.local, "client"):
+            self.local.client = self._create_client()
+        return self.local.client
 
-    def fetch(self, url: str, method: str = "GET"):
+    def fetch(
+        self, url: str, method: str = "GET"
+    ) -> tuple[str, str | None, int | None, httpx.Headers | None]:
         """Fetch a single URL. Returns ``(url, text, status_code, headers)``."""
-        session = self._get_session()
+        client = self._get_client()
         try:
-            r = (
-                session.get(url, timeout=CF_TIMEOUT, allow_redirects=True)
-                if method == "GET"
-                else session.post(url, timeout=CF_TIMEOUT, allow_redirects=False)
-            )
+            for attempt in range(MAX_RETRIES):
+                if method == "GET":
+                    r = client.get(url, follow_redirects=True)
+                else:
+                    r = client.post(url, follow_redirects=False)
+                if r.status_code not in RETRY_STATUSES or attempt >= MAX_RETRIES - 1:
+                    break
+                time.sleep(BACKOFF_FACTOR * (attempt + 1))
             return url, r.text, r.status_code, r.headers
-        except Exception as exc:
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
             logger.debug("Fetch failed for %s: %s", url, exc)
             return url, None, None, None
 
