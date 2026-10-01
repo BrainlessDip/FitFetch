@@ -408,7 +408,7 @@ class FitFetchApp(QMainWindow):
         self.errors_label = QLabel("No errors")
         self.errors_label.setStyleSheet(ModernStyle.muted_label_style())
         self.errors_label.setToolTip(
-            "Number of links that failed during V2 extraction."
+            "Number of links that failed during V1 or V2 extraction."
         )
 
         self.check_btn = QPushButton("Check")
@@ -981,6 +981,7 @@ class FitFetchApp(QMainWindow):
         self.fetch_btn.setEnabled(True)
         self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
+        self._refresh_v2_ui()
         QMessageBox.critical(self, "Error", f"Extraction error:\n{error_msg}")
 
     def on_extraction_complete(self) -> None:
@@ -1246,7 +1247,8 @@ class FitFetchApp(QMainWindow):
         worker.error_occurred.connect(self.on_extract_error)
         worker.extraction_complete.connect(self.on_extraction_complete)
         if method == "v1":
-            worker.link_found.connect(self.add_output)
+            worker.link_found.connect(self.on_v1_link_found)
+            worker.link_failed.connect(self.on_v1_link_failed)
         else:
             worker.link_found.connect(self.on_v2_link_found)
             worker.link_failed.connect(self.on_v2_link_failed)
@@ -1271,6 +1273,45 @@ class FitFetchApp(QMainWindow):
             f"{n_err} error{'s' if n_err != 1 else ''}" if n_err else "No errors"
         )
         self.retry_errors_btn.setEnabled(n_err > 0)
+
+    def on_v1_link_found(self, text: str) -> None:
+        """Handle a single-string V1 (Cloudflare) link_found emission.
+
+        Successful direct links (``https://…#filename``) are recorded in the
+        shared ``successful_links`` state exactly like V2 so Copy (N Links)
+        and Check work after a V1 run. Failure/status log lines are only
+        echoed to the output pane.
+        """
+        if text.startswith(("http://", "https://")):
+            if text not in self.successful_links_set:
+                self.successful_links.append(text)
+                self.successful_links_set.add(text)
+                if text not in self._output_shown:
+                    self.output_text.append(text)
+                    cursor = self.output_text.textCursor()
+                    cursor.movePosition(cursor.MoveOperation.End)
+                    self.output_text.setTextCursor(cursor)
+                    self._output_shown.add(text)
+            self._refresh_v2_ui()
+        else:
+            self.add_output(text)
+
+    def on_v1_link_failed(self, original_link: str, error_msg: str) -> None:
+        """Record a V1 failure in ``error_links`` so Re-extract Errors works.
+
+        The human-readable failure line is already echoed to the output pane
+        via :meth:`on_v1_link_found` (the ``link_found`` signal), so this
+        handler only updates the shared error state.
+        """
+        if original_link not in self.error_links_set:
+            self.error_links.append(original_link)
+            self.error_links_set.add(original_link)
+            self._refresh_v2_ui()
+        logger.debug(
+            "V1 extraction failed for %s: %s",
+            extract_filename(original_link),
+            error_msg,
+        )
 
     def on_v2_link_found(self, original_link: str, text: str) -> None:
         if text not in self.successful_links_set:
@@ -1366,7 +1407,8 @@ class FitFetchApp(QMainWindow):
         )
         self.update_status(summary)
 
-        reextract_btn = None
+        reextract_v1_btn = None
+        reextract_v2_btn = None
         box = QMessageBox(self)
         box.setWindowTitle("Extraction Check")
         box.setIcon(QMessageBox.Icon.Information)
@@ -1375,7 +1417,7 @@ class FitFetchApp(QMainWindow):
         if not self.successful_links:
             box.setInformativeText(
                 "No successfully extracted links recorded yet in this "
-                "session.\nRun a V2 extraction first, then Check again."
+                "session.\nRun a V1 or V2 extraction first, then Check again."
             )
         elif missing:
             max_shown = 6
@@ -1387,17 +1429,47 @@ class FitFetchApp(QMainWindow):
             if hidden > 0:
                 lines += f"\n… and {hidden} more (total {len(missing)})"
             box.setInformativeText(f"Not extracted ({len(missing)}):\n{lines}")
-            reextract_btn = box.addButton(
-                "Re-extract Missing", QMessageBox.ButtonRole.AcceptRole
+            reextract_v1_btn = box.addButton(
+                "Re-extract Missing (V1)", QMessageBox.ButtonRole.AcceptRole
+            )
+            reextract_v2_btn = box.addButton(
+                "Re-extract Missing (V2)", QMessageBox.ButtonRole.AcceptRole
             )
         else:
             box.setInformativeText("All selected links are already extracted.")
         box.addButton(QMessageBox.StandardButton.Close)
         box.exec()
 
-        if reextract_btn is not None and box.clickedButton() is reextract_btn:
+        clicked = box.clickedButton()
+        if reextract_v1_btn is not None and clicked is reextract_v1_btn:
+            missing_links = [link for link, _ in missing]
+            self._extract_v1_links(missing_links)
+        elif reextract_v2_btn is not None and clicked is reextract_v2_btn:
             missing_links = [link for link, _ in missing]
             self._extract_v2_links(missing_links, "Re-extracting missing links")
+
+    def _extract_v1_links(self, links: list[str]) -> None:
+        """Start a V1 extraction for *links* without resetting the session."""
+        if not links or self._extraction_running():
+            return
+        self.extract_worker = CloudflareWorker(
+            links,
+            threads=MAX_CF_THREADS,
+            delay=self._config.v1_delay,
+            parent=self,
+        )
+        self._extract_start_time = time.time()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMaximum(len(links))
+        self.fetch_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
+        self.retry_errors_btn.setEnabled(False)
+        self.update_status(
+            f"Re-extracting missing links with V1 ({len(links)} links)..."
+        )
+        self._wire_extract_worker(self.extract_worker, method="v1")
+        self.extract_worker.start()
 
     def _extract_v2_links(self, links: list[str], status_prefix: str) -> None:
         """Start a V2 extraction for *links* without resetting the session."""

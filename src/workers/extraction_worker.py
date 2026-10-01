@@ -22,6 +22,7 @@ class CloudflareWorker(QThread):
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
     link_found = pyqtSignal(str)
+    link_failed = pyqtSignal(str, str)
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
 
@@ -64,6 +65,7 @@ class CloudflareWorker(QThread):
                     self.link_found.emit(
                         self._fmt("FAILED", filename, part_num, i, "No file ID")
                     )
+                    self.link_failed.emit(link, "No file ID")
                     self.progress_update.emit(i)
                     continue
 
@@ -85,6 +87,9 @@ class CloudflareWorker(QThread):
                     self.link_found.emit(
                         f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds - (Part: {part_num}) - [{i}/{self.total_links}]"
                     )
+                    self.link_failed.emit(
+                        link, f"Rate limited - retry in {retry_seconds} seconds"
+                    )
                     self.status_update.emit(
                         self._fmt("Rate Limited", filename, part_num, i)
                     )
@@ -101,6 +106,7 @@ class CloudflareWorker(QThread):
                                 "CLOUDFLARE", filename, part_num, i, "Protected, use V2"
                             )
                         )
+                        self.link_failed.emit(link, "Cloudflare protected - use V2")
                         self.status_update.emit(
                             self._fmt("Cloudflare detected", filename, part_num, i)
                         )
@@ -118,6 +124,7 @@ class CloudflareWorker(QThread):
                                 "FAILED", filename, part_num, i, "No direct link found"
                             )
                         )
+                        self.link_failed.emit(link, "No direct link found")
                         self.status_update.emit(
                             self._fmt("Failed", filename, part_num, i)
                         )
@@ -127,6 +134,7 @@ class CloudflareWorker(QThread):
                             "FAILED", filename, part_num, i, f"Status {status_code}"
                         )
                     )
+                    self.link_failed.emit(link, f"Status {status_code}")
                     self.status_update.emit(self._fmt("Failed", filename, part_num, i))
 
                 self.progress_update.emit(i)
