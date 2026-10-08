@@ -3,15 +3,70 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
-from .constants import RE_PART_NUM
+from .constants import RE_FF_URL, RE_FILE_ID, RE_PART_NUM, RE_URL_LOOSE, UNKNOWN_FILENAME
+
+
+@dataclass(frozen=True)
+class LinkScan:
+    """Result of scanning pasted text for FuckingFast links."""
+
+    links: list[str]
+    duplicates: int
+    invalid: int
 
 
 def extract_filename(url: str) -> str:
     """Extract the filename from a URL, stripping any fragment."""
     return url.split("/")[-1].split("#")[-1]
+
+
+def display_filename(url: str) -> str:
+    """Return the human-readable file name shown in link lists.
+
+    Falls back to :data:`~src.constants.UNKNOWN_FILENAME` when the URL has no
+    ``#filename`` fragment, because a bare file id is not a name.
+    """
+    if "#" in url:
+        return url.split("#", 1)[1] or UNKNOWN_FILENAME
+    return UNKNOWN_FILENAME
+
+
+def scan_links(text: str) -> LinkScan:
+    """Scan arbitrary pasted *text* for FuckingFast links.
+
+    Handles Markdown links, bare URLs, several links per line and surrounding
+    prose. Returns the valid links with duplicates removed and their original
+    order preserved, plus how many duplicates and non-FuckingFast URLs were
+    ignored so the caller can report them.
+    """
+    text = text or ""
+    links: list[str] = []
+    seen: set[str] = set()
+    duplicates = 0
+
+    for match in RE_FF_URL.finditer(text):
+        url = match.group(0).rstrip(".,;")
+        if not RE_FILE_ID.search(url):
+            continue
+        if url in seen:
+            duplicates += 1
+            continue
+        seen.add(url)
+        links.append(url)
+
+    invalid = len(
+        {
+            url
+            for url in (m.group(0).rstrip(".,;") for m in RE_URL_LOOSE.finditer(text))
+            if not RE_FILE_ID.search(url)
+        }
+    )
+
+    return LinkScan(links=links, duplicates=duplicates, invalid=invalid)
 
 
 def extract_hash_part(url: str) -> str:

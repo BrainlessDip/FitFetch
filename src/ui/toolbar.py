@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QToolBar
 
+from ..constants import PAGE_EXPLORER, PAGE_EXTRACTOR
 from .styles import ModernStyle
 
 if TYPE_CHECKING:
@@ -25,20 +26,17 @@ def create_toolbar(window: FitFetchApp) -> QToolBar:
     window.addToolBar(toolbar)
 
     explorer_btn = QAction("Explorer", window)
-    explorer_btn.triggered.connect(lambda: window._switch_page(1))
+    explorer_btn.triggered.connect(lambda: window._switch_page(PAGE_EXPLORER))
     toolbar.addAction(explorer_btn)
 
     extractor_btn = QAction("Extractor", window)
-    extractor_btn.triggered.connect(lambda: window._switch_page(0))
+    extractor_btn.triggered.connect(lambda: window._switch_page(PAGE_EXTRACTOR))
     toolbar.addAction(extractor_btn)
 
-    extract_v1_btn = QAction("Extract V1", window)
-    extract_v1_btn.triggered.connect(lambda: window.start_extraction(method="v1"))
-    toolbar.addAction(extract_v1_btn)
-
-    extract_v2_btn = QAction("Extract V2", window)
-    extract_v2_btn.triggered.connect(lambda: window.start_extraction(method="v2"))
-    toolbar.addAction(extract_v2_btn)
+    custom_btn = QAction("Custom", window)
+    custom_btn.triggered.connect(window.show_custom)
+    custom_btn.setToolTip("Paste FuckingFast links copied from anywhere.")
+    toolbar.addAction(custom_btn)
 
     toolbar.addSeparator()
 

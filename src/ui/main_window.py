@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QStackedWidget,
+    QSizePolicy,
     QTextEdit,
     QToolTip,
     QVBoxLayout,
@@ -37,6 +38,11 @@ from ..constants import (
     APP_NAME,
     CF_SHUTDOWN_WAIT_MS,
     CLOSE_WAIT_MS,
+    CUSTOM_INPUT_PLACEHOLDER,
+    INPUT_CUSTOM,
+    INPUT_URL,
+    PAGE_EXPLORER,
+    PAGE_EXTRACTOR,
     RE_FITGIRL_URL,
     RE_PART_NUM,
     STARTUP_UPDATE_DELAY_MS,
@@ -48,7 +54,13 @@ from ..constants import (
 )
 from ..logger import logger
 from ..services.update_service import UpdateManager
-from ..utils import extract_filename, extract_part_num
+from ..utils import (
+    LinkScan,
+    display_filename,
+    extract_filename,
+    extract_part_num,
+    scan_links,
+)
 from ..workers.extraction_worker import CloudflareWorker, ZendriverWorker
 from .dialogs import (
     AboutDialog,
@@ -63,6 +75,17 @@ from .file_selection_dialog import FileSelectionDialog
 from .styles import ModernStyle
 from .toolbar import create_toolbar
 from .widgets import ClickableCheckBox
+
+# The URL row is fixed-height; the Custom page takes the whole window while
+# showing, so the input group expands only in that mode.
+INPUT_ROW_HEIGHT = 32
+CUSTOM_LOG_HEIGHT = 110
+CUSTOM_INPUT_MIN_HEIGHT = 320
+
+# The toolbar is the widest element (~696px), so this is the floor that keeps
+# its buttons from truncating. Raise it if a toolbar action is added.
+WINDOW_MIN_WIDTH = 800
+WINDOW_MIN_HEIGHT = 700
 
 
 class FitFetchApp(QMainWindow):
@@ -170,7 +193,7 @@ class FitFetchApp(QMainWindow):
 
     def _init_ui(self) -> None:
         self.setWindowTitle(f"{APP_NAME} v{VERSION}")
-        self.setMinimumSize(750, 700)
+        self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.setWindowFlags(Qt.WindowType.Window)
 
         central_widget = QWidget()
@@ -192,12 +215,15 @@ class FitFetchApp(QMainWindow):
         create_toolbar(self)
 
         # Input section
-        input_group = _make_group("")
-        input_layout = QVBoxLayout(input_group)
+        self._input_group = _make_group("")
+        input_layout = QVBoxLayout(self._input_group)
         input_layout.setSpacing(6)
         input_layout.setContentsMargins(10, 4, 10, 8)
 
-        url_layout = QHBoxLayout()
+        self._url_row = QWidget()
+        self._url_row.setFixedHeight(INPUT_ROW_HEIGHT)
+        url_layout = QHBoxLayout(self._url_row)
+        url_layout.setContentsMargins(0, 0, 0, 0)
         url_layout.setSpacing(8)
 
         self.url_input = QLineEdit()
@@ -219,8 +245,66 @@ class FitFetchApp(QMainWindow):
         url_layout.addWidget(self.url_input)
         url_layout.addWidget(self.paste_btn)
         url_layout.addWidget(self.fetch_btn)
-        input_layout.addLayout(url_layout)
-        main_layout.addWidget(input_group)
+
+        self._custom_page = QWidget()
+        custom_layout = QVBoxLayout(self._custom_page)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        custom_layout.setSpacing(6)
+
+        self.custom_input = QTextEdit()
+        self.custom_input.setPlaceholderText(CUSTOM_INPUT_PLACEHOLDER)
+        self.custom_input.setAcceptRichText(False)
+        self.custom_input.textChanged.connect(self._on_custom_text_changed)
+
+        self.custom_paste_btn = QPushButton("Paste")
+        self.custom_paste_btn.clicked.connect(self.paste_into_custom_input)
+        self.custom_paste_btn.setFixedHeight(32)
+
+        self.import_btn = QPushButton("Import Links")
+        self.import_btn.clicked.connect(self.import_links)
+        self.import_btn.setFixedHeight(32)
+
+        custom_actions = QHBoxLayout()
+        custom_actions.setContentsMargins(0, 0, 0, 0)
+        custom_actions.setSpacing(8)
+        custom_actions.addWidget(self.custom_paste_btn)
+        custom_actions.addWidget(self.import_btn)
+        custom_actions.addStretch()
+
+        log_header = QHBoxLayout()
+        log_header.setContentsMargins(0, 0, 0, 0)
+        log_header.setSpacing(6)
+        log_title = QLabel("Log")
+        log_title.setStyleSheet(ModernStyle.header_label_style())
+        log_header.addWidget(log_title)
+        log_header.addStretch()
+        self.clear_log_btn = QPushButton("Clear")
+        self.clear_log_btn.clicked.connect(self.clear_custom_log)
+        self.clear_log_btn.setFixedHeight(28)
+        self.clear_log_btn.setToolTip("Clear the activity log")
+        log_header.addWidget(self.clear_log_btn)
+
+        self.custom_log = QTextEdit()
+        self.custom_log.setReadOnly(True)
+        self.custom_log.setFixedHeight(CUSTOM_LOG_HEIGHT)
+
+        custom_layout.addWidget(self.custom_input)
+        custom_layout.addLayout(custom_actions)
+        custom_layout.addLayout(log_header)
+        custom_layout.addWidget(self.custom_log)
+        self._custom_log("Ready")
+
+        input_layout.addWidget(self._url_row)
+        input_layout.addWidget(self._custom_page)
+        main_layout.addWidget(self._input_group)
+
+        # Everything below the input row belongs to the Extractor tab and is
+        # hidden entirely while the Custom import screen is showing.
+        self._extractor_section = QWidget()
+        extractor_layout = QVBoxLayout(self._extractor_section)
+        extractor_layout.setContentsMargins(0, 0, 0, 0)
+        extractor_layout.setSpacing(8)
+        main_layout.addWidget(self._extractor_section)
 
         # Status label
         self.status_label = QLabel("● Ready")
@@ -233,7 +317,7 @@ class FitFetchApp(QMainWindow):
                 border-radius: 4px;
             }}
         """)
-        main_layout.addWidget(self.status_label)
+        extractor_layout.addWidget(self.status_label)
 
         # Splitter
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -439,14 +523,14 @@ class FitFetchApp(QMainWindow):
 
         splitter.addWidget(output_widget)
         splitter.setSizes([300, 350])
-        main_layout.addWidget(splitter)
+        extractor_layout.addWidget(splitter)
 
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(20)
-        main_layout.addWidget(self.progress_bar)
+        extractor_layout.addWidget(self.progress_bar)
 
         self.window_status_label = QLabel("")
         self.window_status_label.setStyleSheet(f"""
@@ -457,7 +541,7 @@ class FitFetchApp(QMainWindow):
             }}
         """)
         self.window_status_label.hide()
-        main_layout.addWidget(self.window_status_label)
+        extractor_layout.addWidget(self.window_status_label)
 
         self.statusBar().showMessage("Ready")
 
@@ -467,6 +551,7 @@ class FitFetchApp(QMainWindow):
         self._stack.addWidget(self._extractor_page)
         self._stack.addWidget(self._explorer_widget)
         self._stack.setCurrentIndex(0)
+        self._set_input_mode(INPUT_URL)
 
     # ------------------------------------------------------------------
     # Menubar
@@ -479,12 +564,16 @@ class FitFetchApp(QMainWindow):
         file_menu = menubar.addMenu("Menu")
 
         explorer_action = QAction("FitGirl Explorer", self)
-        explorer_action.triggered.connect(lambda: self._switch_page(1))
+        explorer_action.triggered.connect(lambda: self._switch_page(PAGE_EXPLORER))
         file_menu.addAction(explorer_action)
 
         extractor_action = QAction("Extractor", self)
-        extractor_action.triggered.connect(lambda: self._switch_page(0))
+        extractor_action.triggered.connect(lambda: self._switch_page(PAGE_EXTRACTOR))
         file_menu.addAction(extractor_action)
+
+        custom_action = QAction("Custom", self)
+        custom_action.triggered.connect(self.show_custom)
+        file_menu.addAction(custom_action)
 
         file_menu.addSeparator()
 
@@ -575,12 +664,104 @@ class FitFetchApp(QMainWindow):
 
     def _switch_page(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
+        if index == PAGE_EXTRACTOR:
+            self._set_input_mode(INPUT_URL)
+
+    def _set_input_mode(self, mode: int) -> None:
+        custom = mode == INPUT_CUSTOM
+        self._url_row.setVisible(not custom)
+        self._custom_page.setVisible(custom)
+        self._extractor_section.setVisible(not custom)
+        if custom:
+            self._custom_page.setMinimumHeight(CUSTOM_INPUT_MIN_HEIGHT)
+            self._input_group.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+            )
+            self.custom_input.setFocus()
+        else:
+            self._input_group.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+            )
+        main_layout = self._input_group.parentWidget().layout()
+        main_layout.setStretchFactor(self._input_group, 1 if custom else 0)
+        main_layout.invalidate()
+
+    def show_custom(self) -> None:
+        """Open the Custom tab — the import screen with the pasted-link input."""
+        self._switch_page(PAGE_EXTRACTOR)
+        self._set_input_mode(INPUT_CUSTOM)
 
     def _send_url_to_extractor(self, url: str) -> None:
         self.url_input.setText(url)
-        self._switch_page(0)
+        self._switch_page(PAGE_EXTRACTOR)
         self.statusBar().showMessage("URL loaded — fetching links...", 3000)
         self.start_fetch()
+
+    # ------------------------------------------------------------------
+    # Custom tab (pasted FuckingFast links)
+    # ------------------------------------------------------------------
+
+    def _custom_log(self, message: str) -> None:
+        self.custom_log.append(message)
+
+    def clear_custom_log(self) -> None:
+        self.custom_log.clear()
+
+    def _log_scan(self, scan: LinkScan) -> None:
+        n = len(scan.links)
+        self._custom_log(
+            f"Detected {n} FuckingFast {'link' if n == 1 else 'links'}"
+        )
+        if scan.duplicates:
+            self._custom_log(
+                f"Removed {scan.duplicates} "
+                f"{'duplicate' if scan.duplicates == 1 else 'duplicates'}"
+            )
+        if scan.invalid:
+            self._custom_log(
+                f"Ignored {scan.invalid} "
+                f"{'invalid link' if scan.invalid == 1 else 'invalid links'}"
+            )
+
+    def _on_custom_text_changed(self) -> None:
+        if self.custom_input.toPlainText().strip():
+            return
+        self.custom_log.clear()
+        self._custom_log("Ready")
+
+    def paste_into_custom_input(self) -> None:
+        text = QApplication.clipboard().text()
+        if not text.strip():
+            self._custom_log("Clipboard is empty")
+            return
+        self.custom_input.setPlainText(text.strip())
+        lines = len(text.strip().splitlines())
+        self._custom_log(f"Pasted {lines} {'line' if lines == 1 else 'lines'}")
+        self._log_scan(scan_links(text))
+
+    def import_links(self) -> None:
+        """Scan the pasted text, then hand the links to the Extractor tab."""
+        scan = scan_links(self.custom_input.toPlainText())
+        if not scan.links:
+            self._custom_log("No valid FuckingFast links detected.")
+            return
+
+        self._log_scan(scan)
+        n = len(scan.links)
+        self._custom_log(f"{n} {'link' if n == 1 else 'links'} sent to Extractor")
+        self._custom_log("Opening Extractor...")
+
+        self.output_text.clear()
+        self.progress_bar.setValue(0)
+        self.link_count.setText("0 extracted")
+        self._reset_v2_session()
+        self._fetch_start_time = time.time()
+        self._fetched_size = ""
+        self.populate_checkboxes(scan.links)
+        self._switch_page(PAGE_EXTRACTOR)
+        self.statusBar().showMessage(
+            f"{n} link{'s' if n != 1 else ''} imported from Custom", 4000
+        )
 
     # ------------------------------------------------------------------
     # Clipboard / validation
@@ -778,6 +959,8 @@ class FitFetchApp(QMainWindow):
         self.checkbox_links.clear()
         self.checkbox_widgets.clear()
         self.custom_select_btn.setEnabled(False)
+        self.extract_v1_btn.setEnabled(False)
+        self.extract_v2_btn.setEnabled(False)
         self.parts_count.setText("0 found")
 
     def populate_checkboxes(self, links: list[str]) -> None:
@@ -792,13 +975,13 @@ class FitFetchApp(QMainWindow):
             try:
                 m = RE_PART_NUM.search(extract_filename(url))
                 return int(m.group(1)) if m else 0
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return 0
 
         sorted_links = sorted(links, key=_sort_key)
 
         for link in sorted_links:
-            filename = extract_filename(link)
+            filename = display_filename(link)
             part_num = extract_part_num(filename)
 
             container = QWidget()
@@ -908,7 +1091,7 @@ class FitFetchApp(QMainWindow):
         # If input doesn't look like a URL, search in the explorer instead
         if not url.lower().startswith(("http://", "https://")):
             self._explorer_widget.search_input.setText(url)
-            self._switch_page(1)
+            self._switch_page(PAGE_EXPLORER)
             self._explorer_widget._on_search()
             self.statusBar().showMessage(f'Searching FitGirl for "{url}"...', 3000)
             return
@@ -1025,7 +1208,7 @@ class FitFetchApp(QMainWindow):
                 try:
                     w, h = (int(x) for x in arg.split("=", 1)[1].split(",", 1))
                     return w, h
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     break
         return (
             ZENDRIVER_WINDOW_DEFAULT_WIDTH,
