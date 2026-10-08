@@ -35,8 +35,8 @@ from ..browser.browser_manager import BrowserManager
 from ..config import ConfigManager
 from ..constants import (
     APP_NAME,
+    CF_SHUTDOWN_WAIT_MS,
     CLOSE_WAIT_MS,
-    MAX_CF_THREADS,
     RE_FITGIRL_URL,
     RE_PART_NUM,
     STARTUP_UPDATE_DELAY_MS,
@@ -54,7 +54,7 @@ from .dialogs import (
     AboutDialog,
     BrowserSettingsDialog,
     HelpDialog,
-    MultiWindowSettingsDialog,
+    ParallelProcessingSettingsDialog,
     SettingsDialog,
     VersionDialog,
 )
@@ -97,11 +97,13 @@ class FitFetchApp(QMainWindow):
         self._output_shown: set[str] = set()
         self._retry_snapshot: list[str] | None = None
 
-        # V2 multi-window state
+        # V2 parallel-window state
         self._active_v2_workers: list[ZendriverWorker] = []
         self._window_totals: dict[int, int] = {}
         self._window_progress: dict[int, int] = {}
         self._window_done: set[int] = set()
+        # V1 parallel-worker state (completed count per worker)
+        self._v1_worker_progress: dict[int, int] = {}
 
         # Update manager
         self._update_manager = UpdateManager(self)
@@ -148,9 +150,9 @@ class FitFetchApp(QMainWindow):
             self.worker.wait(CLOSE_WAIT_MS)
 
         if self.extract_worker and self.extract_worker.isRunning():
-            self.extract_worker._shutdown_requested = True
+            self.extract_worker.request_shutdown()
             self.extract_worker.quit()
-            self.extract_worker.wait(5000)
+            self.extract_worker.wait(CF_SHUTDOWN_WAIT_MS)
 
         for worker in self._active_v2_workers:
             worker._shutdown_requested = True
@@ -534,9 +536,9 @@ class FitFetchApp(QMainWindow):
         delays_action.triggered.connect(self.open_settings)
         settings_menu.addAction(delays_action)
 
-        multi_window_action = QAction("Multi-Window", self)
-        multi_window_action.triggered.connect(self.open_multi_window_settings)
-        settings_menu.addAction(multi_window_action)
+        parallel_action = QAction("Parallel Processing", self)
+        parallel_action.triggered.connect(self.open_parallel_processing_settings)
+        settings_menu.addAction(parallel_action)
 
         browser_action = QAction("Browser", self)
         browser_action.triggered.connect(self.open_browser_settings)
@@ -632,18 +634,21 @@ class FitFetchApp(QMainWindow):
                 3000,
             )
 
-    def open_multi_window_settings(self) -> None:
-        dialog = MultiWindowSettingsDialog(
+    def open_parallel_processing_settings(self) -> None:
+        dialog = ParallelProcessingSettingsDialog(
+            self._config.v1_worker_count,
             self._config.window_count,
             self._config.random_window_positions,
             self,
         )
         if dialog.exec():
+            self._config.v1_worker_count = dialog.get_v1_worker_count()
             self._config.window_count = dialog.get_window_count()
             self._config.random_window_positions = dialog.get_random_positions()
             self.statusBar().showMessage(
-                f"Multi-Window settings updated: "
-                f"{dialog.get_window_count()} extraction window(s)",
+                f"Parallel Processing updated: "
+                f"{dialog.get_v1_worker_count()} V1 worker(s), "
+                f"{dialog.get_window_count()} V2 window(s)",
                 3000,
             )
 
@@ -966,12 +971,20 @@ class FitFetchApp(QMainWindow):
         if method == "v1":
             self.extract_worker = CloudflareWorker(
                 selected,
-                threads=MAX_CF_THREADS,
+                workers=self._config.v1_worker_count,
                 delay=self._config.v1_delay,
                 parent=self,
             )
-            self.update_status("Starting V1 extraction (Cloudflare bypass)...")
+            self.update_status(
+                f"Starting V1 extraction ({len(selected)} links, "
+                f"{self._config.v1_worker_count} worker(s))..."
+            )
             self._wire_extract_worker(self.extract_worker, method="v1")
+            self._v1_worker_progress = {
+                i: 0 for i in range(1, self._config.v1_worker_count + 1)
+            }
+            self.window_status_label.show()
+            self._update_v1_progress_label()
             self.extract_worker.start()
         else:
             self._start_v2_workers(selected, is_retry=False)
@@ -985,7 +998,7 @@ class FitFetchApp(QMainWindow):
         QMessageBox.critical(self, "Error", f"Extraction error:\n{error_msg}")
 
     def on_extraction_complete(self) -> None:
-        """Single-worker (V1) completion handler."""
+        """V1 completion handler."""
         self._finish_extraction_run()
 
     # ------------------------------------------------------------------
@@ -1207,6 +1220,7 @@ class FitFetchApp(QMainWindow):
         self._finish_extraction_run()
 
     def _finish_extraction_run(self) -> None:
+        self.window_status_label.hide()
         self.fetch_btn.setEnabled(True)
         self.extract_v1_btn.setEnabled(True)
         self.extract_v2_btn.setEnabled(True)
@@ -1249,11 +1263,13 @@ class FitFetchApp(QMainWindow):
         if method == "v1":
             worker.link_found.connect(self.on_v1_link_found)
             worker.link_failed.connect(self.on_v1_link_failed)
+            worker.worker_progress.connect(self._on_v1_worker_progress)
         else:
             worker.link_found.connect(self.on_v2_link_found)
             worker.link_failed.connect(self.on_v2_link_failed)
 
     def _reset_v2_session(self) -> None:
+        self._v1_worker_progress.clear()
         self.successful_links.clear()
         self.successful_links_set.clear()
         self.error_links.clear()
@@ -1312,6 +1328,23 @@ class FitFetchApp(QMainWindow):
             extract_filename(original_link),
             error_msg,
         )
+
+    def _on_v1_worker_progress(self, wid: int, count: int) -> None:
+        """Record one V1 worker's completed count and refresh the label."""
+        self._v1_worker_progress[wid] = count
+        self._update_v1_progress_label()
+
+    def _update_v1_progress_label(self) -> None:
+        """Render per-worker V1 progress.
+
+        Shows completed counts rather than ``x/y`` because V1 workers pull
+        from a shared queue, so no worker has a fixed denominator.
+        """
+        parts = [
+            f"Worker {wid}: {self._v1_worker_progress.get(wid, 0)} done"
+            for wid in sorted(self._v1_worker_progress)
+        ]
+        self.window_status_label.setText(" · ".join(parts))
 
     def on_v2_link_found(self, original_link: str, text: str) -> None:
         if text not in self.successful_links_set:
@@ -1454,7 +1487,7 @@ class FitFetchApp(QMainWindow):
             return
         self.extract_worker = CloudflareWorker(
             links,
-            threads=MAX_CF_THREADS,
+            workers=self._config.v1_worker_count,
             delay=self._config.v1_delay,
             parent=self,
         )
@@ -1465,8 +1498,14 @@ class FitFetchApp(QMainWindow):
         self.extract_v1_btn.setEnabled(False)
         self.extract_v2_btn.setEnabled(False)
         self.retry_errors_btn.setEnabled(False)
+        self._v1_worker_progress = {
+            i: 0 for i in range(1, self._config.v1_worker_count + 1)
+        }
+        self.window_status_label.show()
+        self._update_v1_progress_label()
         self.update_status(
-            f"Re-extracting missing links with V1 ({len(links)} links)..."
+            f"Re-extracting missing links with V1 "
+            f"({len(links)} links, {self._config.v1_worker_count} worker(s))..."
         )
         self._wire_extract_worker(self.extract_worker, method="v1")
         self.extract_worker.start()

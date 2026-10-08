@@ -9,12 +9,14 @@ A modern, dark-themed GUI tool for extracting FuckingFast direct download links 
 ## Features
 
 - **Extract Links**: Automatically extract FuckingFast direct download links
+- **Built-in Explorer**: Browse and find games directly inside the app without even opening FitGirl.
 - **Modern UI**: Clean, dark GitHub-inspired interface
 - **Smart Detection**: Automatically finds and lists all parts
 - **Selective Extraction**: Choose specific parts to extract
 - **Save to File**: Export links with timestamped filenames
 - **Click to Select**: Click on filenames to toggle selection
 - **Progress Tracking**: Real-time progress bar and status updates
+- **Parallel Processing**: Process many links at once — V1 sends concurrent requests, V2 spawns multiple browser windows (configurable in Settings)
 
 ## Quick Start
 
@@ -96,11 +98,12 @@ If you prefer not to run FitFetch on your main device, you can use a cloud Windo
 
 ```txt
 beautifulsoup4>=4.15.0
+cloudscraper>=1.2.71
+httpx>=0.28.1
 pyqt6>=6.11.0
 requests>=2.34.2
 setuptools>=82.0.1
 zendriver>=0.15.5
-cloudscraper>=1.2.71
 ```
 
 ## Usage
@@ -114,6 +117,20 @@ cloudscraper>=1.2.71
 1. Select/deselect parts using checkboxes or click on filenames
 2. Press `Extract`
 3. Extracted links will appear in the output section
+
+### Parallel Processing
+
+Both extraction methods can process multiple links concurrently, and both are
+configured under **Settings → Parallel Processing**:
+
+- **V1 (Cloudflare) — Parallel Workers:** how many requests are sent at the
+  same time (default: 4). More workers finish faster but increase the chance
+  of rate limiting (HTTP 429).
+- **V2 (Browser) — Parallel Windows:** how many independent browser windows
+  run at once (default: 1). Each window uses its own browser profile.
+
+The request delays in **Settings → Delays** apply *per worker*, so total
+request rate scales with the number of workers.
 
 ## Downloading with JDownloader (Recommended)
 

@@ -33,6 +33,10 @@ NETWORK_TIMEOUT = 8
 # ---------------------------------------------------------------------------
 STARTUP_UPDATE_DELAY_MS = 1500
 CLOSE_WAIT_MS = 3000
+# Grace period for joining V1 worker threads on close. An in-flight request is
+# bounded by CF_TIMEOUT (30s), but the common case has nothing in flight and
+# joins immediately.
+CF_SHUTDOWN_WAIT_MS = 10000
 
 # ---------------------------------------------------------------------------
 # Pre-compiled regexes

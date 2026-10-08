@@ -21,7 +21,13 @@ from PyQt6.QtWidgets import (
 )
 
 from ..constants import APP_NAME, VERSION
-from ..config import MAX_WINDOW_COUNT, MIN_WINDOW_COUNT
+from ..config import (
+    DEFAULT_V1_WORKER_COUNT,
+    MAX_V1_WORKER_COUNT,
+    MAX_WINDOW_COUNT,
+    MIN_V1_WORKER_COUNT,
+    MIN_WINDOW_COUNT,
+)
 from .styles import ModernStyle
 from .widgets import ModernGroupBox
 
@@ -110,28 +116,65 @@ class SettingsDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-# Multi-window settings dialog
+# Parallel processing settings dialog
 # ---------------------------------------------------------------------------
 
 
-class MultiWindowSettingsDialog(QDialog):
-    """Dialog for customising the number of parallel V2 extraction windows."""
+class ParallelProcessingSettingsDialog(QDialog):
+    """Dialog for customising parallel processing on both engines.
+
+    V1 runs ``v1_worker_count`` request threads concurrently; V2 spawns
+    ``window_count`` independent browser windows. Both exist so many links
+    can be processed at once, but they are independent knobs and are capped
+    separately.
+    """
 
     def __init__(
         self,
-        window_count: int = 2,
+        v1_worker_count: int = DEFAULT_V1_WORKER_COUNT,
+        window_count: int = 1,
         random_positions: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Multi-Window Settings - FitFetch")
-        self.setMinimumWidth(400)
+        self.setWindowTitle("Parallel Processing - FitFetch")
+        self.setMinimumWidth(440)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
 
-        mw_group = ModernGroupBox("Multi-Window Settings")
-        mw_layout = QFormLayout(mw_group)
+        # --- V1: parallel request workers ---
+        v1_group = ModernGroupBox("V1 (Cloudflare) - Parallel Workers")
+        v1_layout = QFormLayout(v1_group)
+
+        self.v1_worker_count_spin = QSpinBox()
+        self.v1_worker_count_spin.setRange(
+            MIN_V1_WORKER_COUNT, MAX_V1_WORKER_COUNT
+        )
+        self.v1_worker_count_spin.setSingleStep(1)
+        self.v1_worker_count_spin.setValue(v1_worker_count)
+        self.v1_worker_count_spin.setToolTip(
+            "Number of requests V1 runs at the same time.\n"
+            "Higher values finish faster but send more requests per second,\n"
+            "which makes rate limiting (HTTP 429) more likely.\n"
+            f"Range: {MIN_V1_WORKER_COUNT} - {MAX_V1_WORKER_COUNT}. "
+            f"Default: {DEFAULT_V1_WORKER_COUNT}."
+        )
+        v1_layout.addRow("Number of Parallel Workers:", self.v1_worker_count_spin)
+
+        v1_warning = QLabel(
+            "More workers means more simultaneous requests. Raise this only "
+            "if you are not being rate-limited."
+        )
+        v1_warning.setWordWrap(True)
+        v1_warning.setStyleSheet(f"color: {ModernStyle.WARNING}; font-size: 11px;")
+        v1_layout.addRow("", v1_warning)
+
+        layout.addWidget(v1_group)
+
+        # --- V2: parallel browser windows ---
+        v2_group = ModernGroupBox("V2 (Browser) - Parallel Windows")
+        v2_layout = QFormLayout(v2_group)
 
         self.window_count_spin = QSpinBox()
         self.window_count_spin.setRange(MIN_WINDOW_COUNT, MAX_WINDOW_COUNT)
@@ -140,9 +183,9 @@ class MultiWindowSettingsDialog(QDialog):
         self.window_count_spin.setToolTip(
             "Number of independent browser windows used during V2 extraction.\n"
             "Each window runs in its own isolated worker and profile.\n"
-            f"Range: {MIN_WINDOW_COUNT} - {MAX_WINDOW_COUNT}. Default: 2."
+            f"Range: {MIN_WINDOW_COUNT} - {MAX_WINDOW_COUNT}."
         )
-        mw_layout.addRow("Number of Extraction Windows:", self.window_count_spin)
+        v2_layout.addRow("Number of Parallel Windows:", self.window_count_spin)
 
         self.random_positions_check = QCheckBox("Spawn windows at random positions")
         self.random_positions_check.setChecked(random_positions)
@@ -150,17 +193,16 @@ class MultiWindowSettingsDialog(QDialog):
             "When enabled, extraction windows are placed at random positions\n"
             "on the available screen instead of stacking at the left edge."
         )
-        mw_layout.addRow("", self.random_positions_check)
+        v2_layout.addRow("", self.random_positions_check)
 
-        mw_warning = QLabel(
-            "Make sure you're rich enough to increase the value — each window "
-            "uses additional CPU, RAM, and browser resources."
+        v2_warning = QLabel(
+            "Each window uses additional CPU, RAM, and browser resources."
         )
-        mw_warning.setWordWrap(True)
-        mw_warning.setStyleSheet(f"color: {ModernStyle.WARNING}; font-size: 11px;")
-        mw_layout.addRow("", mw_warning)
+        v2_warning.setWordWrap(True)
+        v2_warning.setStyleSheet(f"color: {ModernStyle.WARNING}; font-size: 11px;")
+        v2_layout.addRow("", v2_warning)
 
-        layout.addWidget(mw_group)
+        layout.addWidget(v2_group)
 
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -168,6 +210,9 @@ class MultiWindowSettingsDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+    def get_v1_worker_count(self) -> int:
+        return self.v1_worker_count_spin.value()
 
     def get_window_count(self) -> int:
         return self.window_count_spin.value()
@@ -345,7 +390,7 @@ class AboutDialog(QMessageBox):
 
             <h3>Features</h3>
             <ul>
-              <li><b>V1 (Cloudflare):</b> Fast concurrent extraction using cloudscraper</li>
+              <li><b>V1 (Cloudflare):</b> Fast parallel extraction using httpx</li>
               <li><b>V2 (Browser):</b> Fallback using zendriver for Cloudflare challenges</li>
               <li>Modern dark-themed interface</li>
               <li>Select or deselect individual parts</li>
@@ -409,7 +454,7 @@ class HelpDialog(QMessageBox):
 
             <h3>Step 3: Extract Direct Links</h3>
             <ul>
-              <li><b>Extract V1 (Cloudflare):</b> Fast method using cloudscraper. Works when the site is not heavily Cloudflare-protected.</li>
+              <li><b>Extract V1 (Cloudflare):</b> Fast method using httpx. Works when the site is not heavily Cloudflare-protected.</li>
               <li><b>Extract V2 (Browser):</b> Uses a real browser (zendriver) to bypass Cloudflare challenges. Slower but more reliable for protected pages.</li>
             </ul>
             <p>Choose V2 if V1 fails with Cloudflare errors.</p>
@@ -429,9 +474,21 @@ class HelpDialog(QMessageBox):
               <li><b>V1 Request Delay:</b> Time between each Cloudflare request (default: 0 ms). Increase if rate-limited.</li>
               <li><b>V2 Request Delay:</b> Time between each browser request (default: 0 ms). Increase if rate-limited.</li>
             </ul>
-            <p>Go to <b>Settings &gt; Multi-Window...</b> to choose how many independent
-            browser windows run in parallel during V2 extraction (default: 1).
-            Each window uses its own isolated browser profile.</p>
+            <p>Go to <b>Settings &gt; Parallel Processing...</b> to control how many
+            links are processed at once. Both extraction methods can process many links
+            concurrently, but in different ways:</p>
+            <ul>
+              <li><b>V1 (Cloudflare) - Parallel Workers:</b> number of requests sent at
+              the same time (default: 4). More workers finish faster but increase the
+              chance of rate limiting (HTTP 429).</li>
+              <li><b>V2 (Browser) - Parallel Windows:</b> number of independent browser
+              windows, each with its own isolated profile (default: 1). Each window uses
+              additional CPU, RAM, and browser resources.</li>
+            </ul>
+            <p style="color: gray; font-size: 11px;">
+              The request delays in <b>Settings &gt; Delays...</b> apply per worker, so
+              the total request rate scales with the number of workers.
+            </p>
 
             <hr>
 

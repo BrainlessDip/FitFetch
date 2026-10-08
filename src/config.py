@@ -11,9 +11,15 @@ from PyQt6.QtCore import QByteArray, QSettings
 from .constants import APP_NAME
 
 # Number of parallel V2 extraction browser windows (also = profile count).
+# V1 uses a separate worker-count knob, defined below.
 DEFAULT_WINDOW_COUNT = 1
 MIN_WINDOW_COUNT = 1
 MAX_WINDOW_COUNT = 8
+
+# Number of concurrent requests V1 (Cloudflare) extraction runs at once.
+DEFAULT_V1_WORKER_COUNT = 4
+MIN_V1_WORKER_COUNT = 1
+MAX_V1_WORKER_COUNT = 16
 
 
 class ConfigManager:
@@ -42,11 +48,33 @@ class ConfigManager:
     def v2_delay(self, value: int) -> None:
         self._settings.setValue("delays/v2", value)
 
-    # -- Multi-window settings -----------------------------------------------
+    # -- Parallel processing settings ----------------------------------------
+
+    @property
+    def v1_worker_count(self) -> int:
+        """Number of concurrent V1 (Cloudflare) request workers."""
+        return max(
+            MIN_V1_WORKER_COUNT,
+            min(
+                MAX_V1_WORKER_COUNT,
+                int(
+                    self._settings.value(
+                        "extraction/v1_worker_count",
+                        DEFAULT_V1_WORKER_COUNT,
+                        type=int,
+                    )
+                ),
+            ),
+        )
+
+    @v1_worker_count.setter
+    def v1_worker_count(self, value: int) -> None:
+        clamped = max(MIN_V1_WORKER_COUNT, min(MAX_V1_WORKER_COUNT, int(value)))
+        self._settings.setValue("extraction/v1_worker_count", clamped)
 
     @property
     def window_count(self) -> int:
-        """Number of parallel V2 extraction browser windows (default: 2)."""
+        """Number of parallel V2 extraction browser windows (default: 1)."""
         return int(
             self._settings.value(
                 "extraction/window_count", DEFAULT_WINDOW_COUNT, type=int
