@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 resolution-markers = [
     "platform_machine == 'x86_64' and sys_platform == 'linux'",
@@ -148,7 +148,6 @@ dependencies = [
     { name = "cloudscraper" },
     { name = "httpx" },
     { name = "pyqt6" },
-    { name = "requests" },
     { name = "setuptools" },
     { name = "zendriver" },
 ]
@@ -164,7 +163,6 @@ requires-dist = [
     { name = "cloudscraper", specifier = ">=1.2.71" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyqt6", specifier = ">=6.11.0" },
-    { name = "requests", specifier = ">=2.34.2" },
     { name = "setuptools", specifier = ">=82.0.1" },
     { name = "zendriver", specifier = ">=0.15.5" },
 ]

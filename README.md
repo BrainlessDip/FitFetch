@@ -101,7 +101,6 @@ beautifulsoup4>=4.15.0
 cloudscraper>=1.2.71
 httpx>=0.28.1
 pyqt6>=6.11.0
-requests>=2.34.2
 setuptools>=82.0.1
 zendriver>=0.15.5
 ```

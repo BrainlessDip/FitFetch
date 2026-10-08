@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import time
+
+import httpx
+
 from ..constants import DEFAULT_USER_AGENT, FITGIRL_SEARCH_URL, REQUEST_TIMEOUT
 from ..extraction.parser import FitGirlParser
 from ..models.data_models import FitGirlPagination, FitGirlSearchResult
+
+SEARCH_HEADERS = {
+    "User-Agent": DEFAULT_USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+SEARCH_RETRY_STATUSES = frozenset({500, 502, 503, 504})
+SEARCH_MAX_RETRIES = 2
+SEARCH_BACKOFF_FACTOR = 0.5
 
 
 class SearchService:
@@ -17,37 +31,28 @@ class SearchService:
         """Search FitGirl and return ``(results, pagination)``.
 
         Raises:
-            ConnectionError: No internet.
-            Timeout: Server slow/offline.
-            ValueError: HTTP errors.
+            httpx.HTTPError: No internet, timeout, or HTTP error status.
         """
-        import requests as _requests
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
+        params = {"s": query}
+        url = f"{FITGIRL_SEARCH_URL}page/{page}/" if page > 1 else FITGIRL_SEARCH_URL
 
-        session = _requests.Session()
-        session.headers.update(
-            {
-                "User-Agent": DEFAULT_USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Encoding": "gzip, deflate",
-                "Accept-Language": "en-US,en;q=0.9",
-            }
-        )
-        retry = Retry(
-            total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504]
-        )
-        adapter = HTTPAdapter(max_retries=retry)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
+        with httpx.Client(
+            headers=SEARCH_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+            transport=httpx.HTTPTransport(retries=SEARCH_MAX_RETRIES),
+            follow_redirects=True,
+        ) as client:
+            resp = client.get(url, params=params)
+            attempt = 0
+            # httpx's transport-level retries only cover connection failures,
+            # so retryable HTTP statuses are handled here.
+            while (
+                resp.status_code in SEARCH_RETRY_STATUSES
+                and attempt < SEARCH_MAX_RETRIES
+            ):
+                time.sleep(SEARCH_BACKOFF_FACTOR * (attempt + 1))
+                attempt += 1
+                resp = client.get(url, params=params)
 
-        try:
-            params = {"s": query}
-            url = (
-                f"{FITGIRL_SEARCH_URL}page/{page}/" if page > 1 else FITGIRL_SEARCH_URL
-            )
-            resp = session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             return FitGirlParser.parse_search_results(resp.text)
-        finally:
-            session.close()

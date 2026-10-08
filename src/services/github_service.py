@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import httpx
+
 from ..constants import APP_NAME, NETWORK_TIMEOUT
 
 
@@ -16,20 +18,18 @@ class GitHubService:
         ``published_at``, ``download_url`` or ``None`` on error.
 
         Raises:
-            ConnectionError: Network unreachable.
-            Timeout: Request timed out.
+            httpx.HTTPError: Network unreachable or request timed out.
             ValueError: Non-200/404/403 status or invalid JSON.
         """
-        import requests as _requests
-
         url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-        resp = _requests.get(
+        resp = httpx.get(
             url,
             headers={
                 "Accept": "application/vnd.github.v3+json",
                 "User-Agent": f"{APP_NAME}/{current_version}",
             },
             timeout=NETWORK_TIMEOUT,
+            follow_redirects=True,
         )
 
         if resp.status_code == 404:

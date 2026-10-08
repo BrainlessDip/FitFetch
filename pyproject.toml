@@ -1,7 +1,7 @@
 [project]
 name = "fitfetch"
 version = "1.4.4"
-description = "Add your description here"
+description = "Extract FuckingFast direct download links from FitGirl Repacks in seconds."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,7 +9,6 @@ dependencies = [
     "cloudscraper>=1.2.71",
     "httpx>=0.28.1",
     "pyqt6>=6.11.0",
-    "requests>=2.34.2",
     "setuptools>=82.0.1",
     "zendriver>=0.15.5",
 ]
