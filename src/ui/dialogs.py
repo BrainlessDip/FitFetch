@@ -148,9 +148,7 @@ class ParallelProcessingSettingsDialog(QDialog):
         v1_layout = QFormLayout(v1_group)
 
         self.v1_worker_count_spin = QSpinBox()
-        self.v1_worker_count_spin.setRange(
-            MIN_V1_WORKER_COUNT, MAX_V1_WORKER_COUNT
-        )
+        self.v1_worker_count_spin.setRange(MIN_V1_WORKER_COUNT, MAX_V1_WORKER_COUNT)
         self.v1_worker_count_spin.setSingleStep(1)
         self.v1_worker_count_spin.setValue(v1_worker_count)
         self.v1_worker_count_spin.setToolTip(
@@ -518,5 +516,5 @@ def _format_date(published_at: str) -> str:
     try:
         dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
         return dt.strftime("%Y-%m-%d")
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return published_at[:10] if len(published_at) >= 10 else published_at

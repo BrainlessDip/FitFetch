@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
-from .constants import RE_FF_URL, RE_FILE_ID, RE_PART_NUM, RE_URL_LOOSE, UNKNOWN_FILENAME
+from .constants import (
+    RE_FF_URL,
+    RE_FILE_ID,
+    RE_PART_NUM,
+    RE_URL_LOOSE,
+    UNKNOWN_FILENAME,
+)
 
 
 @dataclass(frozen=True)

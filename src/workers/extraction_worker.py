@@ -37,7 +37,7 @@ class CloudflareWorker(QThread):
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
     worker_progress = pyqtSignal(int, int)
-    link_found = pyqtSignal(str)
+    link_found = pyqtSignal(str, str)
     link_failed = pyqtSignal(str, str)
     error_occurred = pyqtSignal(str)
     extraction_complete = pyqtSignal()
@@ -146,7 +146,7 @@ class CloudflareWorker(QThread):
                 # One bad link must not abort the run: record it and carry on.
                 logger.exception("V1 worker %s failed on %s", wid, filename)
                 self.link_found.emit(
-                    self._fmt("FAILED", filename, part_num, index, str(exc))
+                    link, self._fmt("FAILED", filename, part_num, index, str(exc))
                 )
                 self.link_failed.emit(link, str(exc))
             finally:
@@ -179,7 +179,8 @@ class CloudflareWorker(QThread):
 
         if not file_id:
             self.link_found.emit(
-                self._fmt("FAILED", filename, part_num, index, "No file ID")
+                link,
+                self._fmt("FAILED", filename, part_num, index, "No file ID"),
             )
             self.link_failed.emit(link, "No file ID")
             return
@@ -195,10 +196,11 @@ class CloudflareWorker(QThread):
             retry_after = headers.get("Retry-After") if headers else None
             try:
                 retry_seconds = int(retry_after) if retry_after else 60
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 retry_seconds = 60
             self.link_found.emit(
-                f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds - (Part: {part_num}) - [{index}/{self.total_links}]"
+                link,
+                f"RATE LIMITED: {filename} - Try again in {retry_seconds} seconds - (Part: {part_num}) - [{index}/{self.total_links}]",
             )
             self.link_failed.emit(
                 link, f"Rate limited - retry in {retry_seconds} seconds"
@@ -215,9 +217,10 @@ class CloudflareWorker(QThread):
                 or "just a moment" in lower_src
             ):
                 self.link_found.emit(
+                    link,
                     self._fmt(
                         "CLOUDFLARE", filename, part_num, index, "Protected, use V2"
-                    )
+                    ),
                 )
                 self.link_failed.emit(link, "Cloudflare protected - use V2")
                 self.status_update.emit(
@@ -227,30 +230,26 @@ class CloudflareWorker(QThread):
         elif page_source and status_code == 200:
             extracted_url = headers.get("Hx-Redirect") if headers else None
             if extracted_url:
-                self.link_found.emit(extracted_url + f"#{filename}")
+                self.link_found.emit(link, extracted_url + f"#{filename}")
                 self.status_update.emit(
                     self._fmt("Extracted", filename, part_num, index)
                 )
             else:
                 self.link_found.emit(
+                    link,
                     self._fmt(
                         "FAILED", filename, part_num, index, "No direct link found"
-                    )
+                    ),
                 )
                 self.link_failed.emit(link, "No direct link found")
-                self.status_update.emit(
-                    self._fmt("Failed", filename, part_num, index)
-                )
+                self.status_update.emit(self._fmt("Failed", filename, part_num, index))
         else:
             self.link_found.emit(
-                self._fmt(
-                    "FAILED", filename, part_num, index, f"Status {status_code}"
-                )
+                link,
+                self._fmt("FAILED", filename, part_num, index, f"Status {status_code}"),
             )
             self.link_failed.emit(link, f"Status {status_code}")
-            self.status_update.emit(
-                self._fmt("Failed", filename, part_num, index)
-            )
+            self.status_update.emit(self._fmt("Failed", filename, part_num, index))
 
 
 class ZendriverWorker(QThread):

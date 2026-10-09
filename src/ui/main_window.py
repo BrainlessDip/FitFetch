@@ -709,9 +709,7 @@ class FitFetchApp(QMainWindow):
 
     def _log_scan(self, scan: LinkScan) -> None:
         n = len(scan.links)
-        self._custom_log(
-            f"Detected {n} FuckingFast {'link' if n == 1 else 'links'}"
-        )
+        self._custom_log(f"Detected {n} FuckingFast {'link' if n == 1 else 'links'}")
         if scan.duplicates:
             self._custom_log(
                 f"Removed {scan.duplicates} "
@@ -931,20 +929,11 @@ class FitFetchApp(QMainWindow):
         selected = len(self.get_selected_links())
         self.parts_count.setText(f"{selected}/{total} selected")
 
-    def update_link_count(self) -> None:
-        text = self.output_text.toPlainText().strip()
-        if text:
-            count = len(text.splitlines())
-            self.link_count.setText(f"{count} links")
-        else:
-            self.link_count.setText("0 extracted")
-
     def add_output(self, text: str) -> None:
         self.output_text.append(text)
         cursor = self.output_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.output_text.setTextCursor(cursor)
-        self.update_link_count()
 
     # ------------------------------------------------------------------
     # Checkbox management
@@ -1413,9 +1402,8 @@ class FitFetchApp(QMainWindow):
         if self._retry_snapshot is not None:
             snapshot = list(self._retry_snapshot)
             self._retry_snapshot = None
-            recovered = len(snapshot) - len(self.error_links)
-            remaining = len(self.error_links)
-            self._refresh_v2_ui()
+            remaining = sum(1 for link in snapshot if link in self.error_links_set)
+            recovered = len(snapshot) - remaining
             if remaining == 0:
                 self.update_status(
                     f"Re-extract complete: all {recovered} error(s) recovered ({elapsed:.1f}s)"
@@ -1430,13 +1418,9 @@ class FitFetchApp(QMainWindow):
             )
             return
 
-        self._refresh_v2_ui()
-        if self.successful_links:
-            count_text = self.link_count.text()
-        else:
-            self.update_link_count()
-            count_text = self.link_count.text()
-        self.update_status(f"Extraction complete ({count_text}) ({elapsed:.1f}s)")
+        self.update_status(
+            f"Extraction complete ({self.link_count.text()}) ({elapsed:.1f}s)"
+        )
 
     def _wire_extract_worker(self, worker, method: str) -> None:
         worker.status_update.connect(self.update_status)
@@ -1473,39 +1457,39 @@ class FitFetchApp(QMainWindow):
         )
         self.retry_errors_btn.setEnabled(n_err > 0)
 
-    def on_v1_link_found(self, text: str) -> None:
-        """Handle a single-string V1 (Cloudflare) link_found emission.
+    def _record_success(self, original_link: str, text: str) -> None:
+        """Record one extracted link; a success is no longer an error."""
+        if text not in self.successful_links_set:
+            self.successful_links.append(text)
+            self.successful_links_set.add(text)
+            if text not in self._output_shown:
+                self.output_text.append(text)
+                cursor = self.output_text.textCursor()
+                cursor.movePosition(cursor.MoveOperation.End)
+                self.output_text.setTextCursor(cursor)
+                self._output_shown.add(text)
+        if original_link in self.error_links_set:
+            self.error_links.remove(original_link)
+            self.error_links_set.discard(original_link)
+        self._refresh_v2_ui()
 
-        Successful direct links (``https://…#filename``) are recorded in the
-        shared ``successful_links`` state exactly like V2 so Copy (N Links)
-        and Check work after a V1 run. Failure/status log lines are only
-        echoed to the output pane.
-        """
+    def _record_failure(self, original_link: str) -> None:
+        """Record *original_link* as still failing, without double counting."""
+        if original_link not in self.error_links_set:
+            self.error_links.append(original_link)
+            self.error_links_set.add(original_link)
+        self._refresh_v2_ui()
+
+    def on_v1_link_found(self, original_link: str, text: str) -> None:
+        """Route one V1 emission: direct link to results, log line to output."""
         if text.startswith(("http://", "https://")):
-            if text not in self.successful_links_set:
-                self.successful_links.append(text)
-                self.successful_links_set.add(text)
-                if text not in self._output_shown:
-                    self.output_text.append(text)
-                    cursor = self.output_text.textCursor()
-                    cursor.movePosition(cursor.MoveOperation.End)
-                    self.output_text.setTextCursor(cursor)
-                    self._output_shown.add(text)
-            self._refresh_v2_ui()
+            self._record_success(original_link, text)
         else:
             self.add_output(text)
 
     def on_v1_link_failed(self, original_link: str, error_msg: str) -> None:
-        """Record a V1 failure in ``error_links`` so Re-extract Errors works.
-
-        The human-readable failure line is already echoed to the output pane
-        via :meth:`on_v1_link_found` (the ``link_found`` signal), so this
-        handler only updates the shared error state.
-        """
-        if original_link not in self.error_links_set:
-            self.error_links.append(original_link)
-            self.error_links_set.add(original_link)
-            self._refresh_v2_ui()
+        """Record a V1 failure; its log line already went out via link_found."""
+        self._record_failure(original_link)
         logger.debug(
             "V1 extraction failed for %s: %s",
             extract_filename(original_link),
@@ -1530,16 +1514,7 @@ class FitFetchApp(QMainWindow):
         self.window_status_label.setText(" · ".join(parts))
 
     def on_v2_link_found(self, original_link: str, text: str) -> None:
-        if text not in self.successful_links_set:
-            self.successful_links.append(text)
-            self.successful_links_set.add(text)
-            if text not in self._output_shown:
-                self.output_text.append(text)
-                self._output_shown.add(text)
-        if original_link in self.error_links_set:
-            self.error_links.remove(original_link)
-            self.error_links_set.remove(original_link)
-        self._refresh_v2_ui()
+        self._record_success(original_link, text)
 
     def on_v2_link_failed(self, original_link: str, error_msg: str) -> None:
         filename = extract_filename(original_link)
@@ -1552,10 +1527,7 @@ class FitFetchApp(QMainWindow):
         cursor.movePosition(cursor.MoveOperation.End)
         self.output_text.setTextCursor(cursor)
 
-        if original_link not in self.error_links_set:
-            self.error_links.append(original_link)
-            self.error_links_set.add(original_link)
-        self._refresh_v2_ui()
+        self._record_failure(original_link)
         logger.debug("V2 extraction failed for %s: %s", filename, error_msg)
 
     def retry_errors(self) -> None:
@@ -1662,7 +1634,7 @@ class FitFetchApp(QMainWindow):
             self._extract_v1_links(missing_links)
         elif reextract_v2_btn is not None and clicked is reextract_v2_btn:
             missing_links = [link for link, _ in missing]
-            self._extract_v2_links(missing_links, "Re-extracting missing links")
+            self._extract_v2_links(missing_links)
 
     def _extract_v1_links(self, links: list[str]) -> None:
         """Start a V1 extraction for *links* without resetting the session."""
@@ -1684,6 +1656,7 @@ class FitFetchApp(QMainWindow):
         self._v1_worker_progress = {
             i: 0 for i in range(1, self._config.v1_worker_count + 1)
         }
+        self._retry_snapshot = list(links)
         self.window_status_label.show()
         self._update_v1_progress_label()
         self.update_status(
@@ -1693,11 +1666,11 @@ class FitFetchApp(QMainWindow):
         self._wire_extract_worker(self.extract_worker, method="v1")
         self.extract_worker.start()
 
-    def _extract_v2_links(self, links: list[str], status_prefix: str) -> None:
-        """Start a V2 extraction for *links* without resetting the session."""
+    def _extract_v2_links(self, links: list[str]) -> None:
+        """Start V2 extraction for *links* without resetting the session."""
         if not links or self._extraction_running():
             return
-        self._start_v2_workers(links, is_retry=False)
+        self._start_v2_workers(links, is_retry=True)
 
     # ------------------------------------------------------------------
     # Save / Copy / Clear
